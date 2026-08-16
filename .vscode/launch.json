@@ -1,0 +1,175 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"name": "Django: Daphne (ASGI + WebSocket)",
+			"type": "debugpy",
+			"request": "launch",
+			"module": "daphne",
+			"args": ["-b", "127.0.0.1", "-p", "8001", "config.asgi:application"],
+			"cwd": "${workspaceFolder}/backend",
+			"python": "${workspaceFolder}/backend/.venv/bin/python",
+			"justMyCode": false,
+			"env": {
+				"DJANGO_SETTINGS_MODULE": "config.settings.development",
+				"DATABASE_URL": "postgres://romgi:romgi@localhost:5434/romgi",
+				"REDIS_URL": "redis://localhost:6380/0",
+				"CELERY_BROKER_URL": "redis://localhost:6380/1",
+				"CELERY_RESULT_BACKEND": "redis://localhost:6380/1",
+				"CHANNELS_REDIS_URL": "redis://localhost:6380/2",
+				"QBITTORRENT_HOST": "http://localhost:8080"
+			},
+			"preLaunchTask": "Start Postgres + Redis"
+		},
+		{
+			"name": "Celery: Worker (debug, solo pool)",
+			"type": "debugpy",
+			"request": "launch",
+			"module": "celery",
+			"args": [
+				"-A", "config", "worker",
+				"-l", "info",
+				"--pool=solo",
+				"-Q", "celery,downloads,torrents,credentials,metadata,ingestion"
+			],
+			"cwd": "${workspaceFolder}/backend",
+			"python": "${workspaceFolder}/backend/.venv/bin/python",
+			"justMyCode": false,
+			"env": {
+				"DJANGO_SETTINGS_MODULE": "config.settings.development",
+				"DATABASE_URL": "postgres://romgi:romgi@localhost:5434/romgi",
+				"REDIS_URL": "redis://localhost:6380/0",
+				"CELERY_BROKER_URL": "redis://localhost:6380/1",
+				"CELERY_RESULT_BACKEND": "redis://localhost:6380/1",
+				"CHANNELS_REDIS_URL": "redis://localhost:6380/2",
+				"QBITTORRENT_HOST": "http://localhost:8080"
+			},
+			"preLaunchTask": "Start Postgres + Redis"
+		},
+		{
+			"name": "Celery: Beat",
+			"type": "debugpy",
+			"request": "launch",
+			"module": "celery",
+			"args": [
+				"-A", "config", "beat",
+				"-l", "info",
+				"--scheduler", "django_celery_beat.schedulers:DatabaseScheduler"
+			],
+			"cwd": "${workspaceFolder}/backend",
+			"python": "${workspaceFolder}/backend/.venv/bin/python",
+			"justMyCode": false,
+			"env": {
+				"DJANGO_SETTINGS_MODULE": "config.settings.development",
+				"DATABASE_URL": "postgres://romgi:romgi@localhost:5434/romgi",
+				"REDIS_URL": "redis://localhost:6380/0",
+				"CELERY_BROKER_URL": "redis://localhost:6380/1",
+				"CELERY_RESULT_BACKEND": "redis://localhost:6380/1"
+			},
+			"preLaunchTask": "Start Postgres + Redis"
+		},
+		{
+			"name": "Django: Migrate",
+			"type": "debugpy",
+			"request": "launch",
+			"program": "${workspaceFolder}/backend/manage.py",
+			"args": ["migrate"],
+			"cwd": "${workspaceFolder}/backend",
+			"python": "${workspaceFolder}/backend/.venv/bin/python",
+			"django": true,
+			"justMyCode": false,
+			"env": {
+				"DJANGO_SETTINGS_MODULE": "config.settings.development",
+				"DATABASE_URL": "postgres://romgi:romgi@localhost:5434/romgi",
+				"REDIS_URL": "redis://localhost:6380/0"
+			},
+			"preLaunchTask": "Start Postgres + Redis"
+		},
+		{
+			"name": "Django: Shell",
+			"type": "debugpy",
+			"request": "launch",
+			"program": "${workspaceFolder}/backend/manage.py",
+			"args": ["shell"],
+			"cwd": "${workspaceFolder}/backend",
+			"python": "${workspaceFolder}/backend/.venv/bin/python",
+			"django": true,
+			"justMyCode": false,
+			"console": "integratedTerminal",
+			"env": {
+				"DJANGO_SETTINGS_MODULE": "config.settings.development",
+				"DATABASE_URL": "postgres://romgi:romgi@localhost:5434/romgi",
+				"REDIS_URL": "redis://localhost:6380/0"
+			},
+			"preLaunchTask": "Start Postgres + Redis"
+		},
+		{
+			"name": "Django: Setup Periodic Tasks",
+			"type": "debugpy",
+			"request": "launch",
+			"program": "${workspaceFolder}/backend/manage.py",
+			"args": ["setup_periodic_tasks"],
+			"cwd": "${workspaceFolder}/backend",
+			"python": "${workspaceFolder}/backend/.venv/bin/python",
+			"django": true,
+			"justMyCode": false,
+			"env": {
+				"DJANGO_SETTINGS_MODULE": "config.settings.development",
+				"DATABASE_URL": "postgres://romgi:romgi@localhost:5434/romgi",
+				"REDIS_URL": "redis://localhost:6380/0"
+			},
+			"preLaunchTask": "Start Postgres + Redis"
+		},
+		{
+			"name": "Django: Ingest Catalog (MarioCube)",
+			"type": "debugpy",
+			"request": "launch",
+			"program": "${workspaceFolder}/backend/manage.py",
+			"args": ["ingest_catalog", "--sources", "mariocube"],
+			"cwd": "${workspaceFolder}/backend",
+			"python": "${workspaceFolder}/backend/.venv/bin/python",
+			"django": true,
+			"justMyCode": false,
+			"env": {
+				"DJANGO_SETTINGS_MODULE": "config.settings.development",
+				"DATABASE_URL": "postgres://romgi:romgi@localhost:5434/romgi",
+				"REDIS_URL": "redis://localhost:6380/0"
+			},
+			"preLaunchTask": "Start Postgres + Redis"
+		},
+		{
+			"name": "SvelteKit: Dev Server",
+			"type": "node",
+			"request": "launch",
+			"runtimeExecutable": "npm",
+			"runtimeArgs": ["run", "dev"],
+			"cwd": "${workspaceFolder}/frontend",
+			"console": "integratedTerminal",
+			"skipFiles": ["<node_internals>/**"]
+		},
+		{
+			"name": "Chrome: Debug Frontend",
+			"type": "chrome",
+			"request": "launch",
+			"url": "http://localhost:5173",
+			"webRoot": "${workspaceFolder}/frontend/src",
+			"sourceMaps": true
+		}
+	],
+	"compounds": [
+		{
+			"name": "Full Stack (Daphne + Celery + Frontend)",
+			"configurations": [
+				"Django: Daphne (ASGI + WebSocket)",
+				"Celery: Worker (debug, solo pool)",
+				"SvelteKit: Dev Server"
+			],
+			"stopAll": true
+		},
+		{
+			"name": "Frontend: Dev Server + Chrome Debugger",
+			"configurations": ["SvelteKit: Dev Server", "Chrome: Debug Frontend"],
+			"stopAll": true
+		}
+	]
+}

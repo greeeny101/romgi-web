@@ -1,0 +1,171 @@
+name: romgi-web
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: romgi
+      POSTGRES_PASSWORD: romgi
+      POSTGRES_DB: romgi
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U romgi"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  django:
+    build:
+      context: ./backend
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py setup_periodic_tasks &&
+             daphne -b 0.0.0.0 -p 8000 config.asgi:application"
+    env_file: ./backend/.env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.development
+    volumes:
+      - ./backend:/app
+      - staged_files:/app/data/staged
+      - torrent_data:/app/data/torrents
+    ports:
+      - "8001:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Per-queue workers, matching CELERY_TASK_ROUTES in config/settings/base.py.
+  # A single unqualified `celery worker` only consumes Celery's implicit
+  # default queue ("celery"), which nothing is ever routed to — every task
+  # here needs a worker explicitly subscribed to its queue via -Q, or it
+  # just sits unconsumed in Redis forever.
+  celery-worker:
+    build:
+      context: ./backend
+    command: celery -A config worker -l info -Q celery,downloads
+    env_file: ./backend/.env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.development
+    volumes:
+      - ./backend:/app
+      - staged_files:/app/data/staged
+      - torrent_data:/app/data/torrents
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Dedicated so qBittorrent's frequent poll_active_torrents ticks never
+  # queue behind a slow HTTP download or ingestion scrape.
+  celery-worker-torrents:
+    build:
+      context: ./backend
+    command: celery -A config worker -l info -Q torrents
+    env_file: ./backend/.env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.development
+    volumes:
+      - ./backend:/app
+      - torrent_data:/app/data/torrents
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Long-running, low-concurrency catalog scrapes — isolated so a big
+  # ingestion run can't starve user-facing downloads.
+  celery-worker-ingestion:
+    build:
+      context: ./backend
+    command: celery -A config worker -l info -Q ingestion --concurrency=2
+    env_file: ./backend/.env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.development
+    volumes:
+      - ./backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # External-API-bound (IA login/revalidate, ScreenScraper/SteamGridDB) —
+  # network-latency-heavy, doesn't need the download pipeline's volumes.
+  celery-worker-external:
+    build:
+      context: ./backend
+    command: celery -A config worker -l info -Q credentials,metadata
+    env_file: ./backend/.env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.development
+    volumes:
+      - ./backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery-beat:
+    build:
+      context: ./backend
+    command: celery -A config beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    env_file: ./backend/.env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.development
+    volumes:
+      - ./backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  qbittorrent:
+    image: linuxserver/qbittorrent:latest
+    environment:
+      PUID: 1000
+      PGID: 1000
+      TZ: UTC
+      WEBUI_PORT: 8080
+    volumes:
+      - torrent_data:/downloads
+    ports:
+      - "8080:8080"
+
+  sveltekit:
+    build:
+      context: ./frontend
+    command: npm run dev -- --host
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      VITE_API_BASE_URL: http://localhost:8001/api
+      VITE_WS_BASE_URL: ws://localhost:8001/ws
+    ports:
+      - "5174:5173"
+    depends_on:
+      - django
+
+volumes:
+  postgres_data:
+  staged_files:
+  torrent_data:
