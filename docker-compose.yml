@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: romgi
       POSTGRES_DB: romgi
     ports:
-      - "5434:5432"
+      - "127.0.0.1:5434:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -20,7 +20,7 @@ services:
   redis:
     image: redis:7
     ports:
-      - "6380:6379"
+      - "127.0.0.1:6380:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -42,7 +42,7 @@ services:
       - staged_files:/app/data/staged
       - torrent_data:/app/data/torrents
     ports:
-      - "8001:8000"
+      - "127.0.0.1:8001:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -148,7 +148,7 @@ services:
     volumes:
       - torrent_data:/downloads
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
 
   sveltekit:
     build:
@@ -161,7 +161,7 @@ services:
       VITE_API_BASE_URL: http://localhost:8001/api
       VITE_WS_BASE_URL: ws://localhost:8001/ws
     ports:
-      - "5174:5173"
+      - "127.0.0.1:5174:5173"
     depends_on:
       - django
 
