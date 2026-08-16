@@ -28,6 +28,18 @@
 		await session.logout();
 		await goto('/login');
 	}
+
+	const navLinks = [
+		{ href: '/', label: 'Browse' },
+		{ href: '/downloads', label: 'Downloads' },
+		{ href: '/library', label: 'Library' },
+		{ href: '/sources', label: 'Sources' },
+		{ href: '/settings', label: 'Settings' }
+	];
+
+	function isActive(href: string): boolean {
+		return href === '/' ? page.url.pathname === '/' : page.url.pathname.startsWith(href);
+	}
 </script>
 
 <svelte:head>
@@ -40,11 +52,14 @@
 			<a href="/" class="text-lg font-semibold text-gray-900 dark:text-white">romgi</a>
 			{#if $auth}
 				<nav class="flex items-center gap-4 text-sm font-medium text-gray-500 dark:text-gray-400">
-					<a href="/" class="text-primary-600 dark:text-primary-400">Browse</a>
-					<a href="/downloads">Downloads</a>
-					<a href="/library">Library</a>
-					<a href="/sources">Sources</a>
-					<a href="/settings">Settings</a>
+					{#each navLinks as link (link.href)}
+						<a
+							href={link.href}
+							class={isActive(link.href) ? 'text-primary-600 dark:text-primary-400' : ''}
+						>
+							{link.label}
+						</a>
+					{/each}
 					{#if $currentUser}
 						<span class="text-xs text-gray-400">{$currentUser.email}</span>
 					{/if}

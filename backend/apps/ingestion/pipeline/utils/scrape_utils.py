@@ -31,15 +31,32 @@ REQUEST_DELAY = 1  # seconds between requests to avoid rate limiting
 # Global Playwright browser instance for efficiency
 _playwright = None
 _browser = None
+_browser_unavailable = False
 _last_request_time = 0
 
 
 def _get_browser():
     """Get or create the Playwright browser instance."""
-    global _playwright, _browser
+    global _playwright, _browser, _browser_unavailable
+    if _browser_unavailable:
+        raise RuntimeError("Playwright browser is unavailable (see earlier launch error).")
     if _browser is None:
-        _playwright = sync_playwright().start()
-        _browser = _playwright.chromium.launch(headless=True)
+        try:
+            _playwright = sync_playwright().start()
+            _browser = _playwright.chromium.launch(headless=True)
+        except Exception:
+            # A failed launch (e.g. browser binary missing) can leave the
+            # driver's background event loop dangling on this thread if we
+            # just retry sync_playwright().start() on the next call — which
+            # then trips Playwright's own "Sync API inside the asyncio loop"
+            # guard, and *that* leftover loop makes Django's sync-ORM guard
+            # (SynchronousOnlyOperation) misfire for the rest of the process.
+            # Fail once, cleanly, and stay failed rather than cascade.
+            _browser_unavailable = True
+            if _playwright is not None:
+                _playwright.stop()
+                _playwright = None
+            raise
     return _browser
 
 

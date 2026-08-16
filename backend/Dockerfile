@@ -24,6 +24,13 @@ COPY pyproject.toml uv.lock ./
 ARG UV_SYNC_ARGS=""
 RUN uv sync --frozen ${UV_SYNC_ARGS}
 
+# The mariocube ingestion source needs a real browser (TLS-fingerprinting
+# bypass) — see apps/ingestion/pipeline/utils/scrape_utils.py. `uv sync`
+# only installs the playwright Python package; the browser binary itself
+# is a separate download.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
+RUN /opt/venv/bin/playwright install --with-deps chromium
+
 # The venv deliberately lives outside /app (UV_PROJECT_ENVIRONMENT above) —
 # docker-compose.yml's dev services bind-mount ./backend over /app at
 # runtime, which would otherwise shadow (and, worse, silently replace with

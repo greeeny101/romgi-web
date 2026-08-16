@@ -2,29 +2,31 @@
 MarioCube source plugin.
 
 repo.mariocube.com renders a sortable HTML file-listing table for every
-directory. An earlier version of this scraper targeted a plain-text
-ANSI-colored listing the site apparently used to serve to curl-style
-User-Agents; that response shape is gone (the site now always returns the
-HTML table regardless of User-Agent), which made `parse_listing_lines`
-mistake raw table markup for a filename/size pair. Each row instead looks
-like:
+directory, and the table markup has already drifted twice from what this
+scraper expects (see git history). Current shape, per row:
 
-    <tr><td class="">-</td>
-        <td class="" sortv="FILENAME"><a href="ENCODED_HREF">FILENAME</a></td>
-        <td class="">SIZE_BYTES</td><td class="">EXT</td><td class="">DATE</td>
+    <tr tabindex="0">
+      <td class=""><a href="?doc=FILENAME" ...>-txt-</a></td>
+      <td class=""><a href="/ABSOLUTE/PATH/TO/FILENAME">FILENAME</a></td>
+      <td sortv="SIZE_BYTES" class="">SIZE_HUMAN</td>
+      <td class="">EXT</td><td class="">DATE</td>
     </tr>
 
-`parse_listing_rows` extracts (filename, href, size_bytes) straight from
-that markup — using the table's own `href` rather than re-deriving it via
-`urllib.parse.quote(filename)` avoids double-encoding edge cases (the site's
-own encoding of `'`/`&`/etc. isn't guaranteed to match Python's).
+Two rows per entry — a `?doc=` "-txt-" link (skipped; href doesn't start
+with `/`, so the regex only matches the second, real-file `<a>`) and the
+actual file link. `href` is now a *site-absolute* path (starts with `/`),
+not a bare filename — pass it through `urllib.parse.urljoin` (which
+replaces the base's path entirely for a leading `/`) rather than
+`join_urls` (which treats every link as relative to the current directory
+and would double up the path here).
 """
 import html
 import re
+import urllib.parse
 
 from utils import cache_manager
 from utils.scrape_utils import fetch_url, create_scraper_session
-from utils.parse_utils import size_bytes_to_str, join_urls
+from utils.parse_utils import size_bytes_to_str
 
 from typing import Any, Generator
 from core.contract import BuildContext, PlatformConfig, SourceManifest
@@ -40,9 +42,8 @@ CURL_HEADERS = {
 }
 
 _ROW_RE = re.compile(
-    r'<td class="" sortv="(?P<filename>[^"]*)">\s*'
-    r'<a href="(?P<href>[^"]+)">[^<]*</a>\s*'
-    r'</td>\s*<td class="">(?P<size>-|\d+)</td>',
+    r'<a href="(?P<href>/[^"]+)"[^>]*>(?P<filename>[^<]*)</a>\s*'
+    r'</td>\s*<td sortv="(?P<size>\d+)" class="">',
     re.DOTALL,
 )
 
@@ -66,7 +67,7 @@ def extract_entries(response: str, source: dict[str, Any], platform: str, base_u
 def create_entry(link: str, filename: str, title: str, size: int, source: dict[str, Any], platform: str, base_url: str) -> dict[str, Any]:
     """Create a dictionary representing a single entry."""
     name = html.unescape(title).strip()
-    url = join_urls(base_url, link)
+    url = urllib.parse.urljoin(base_url, link)
 
     return {
         'title': name,
