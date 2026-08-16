@@ -67,6 +67,12 @@ Edit `backend/.env` and set at minimum:
 - `ENCRYPTION_KEY` — generate with:
   `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
 
+**If the generated value contains a `$`, escape it as `$$`** — Docker
+Compose interpolates every value in `.env`, and an unescaped `$word` gets
+silently stripped out (you'd see `The "word" variable is not set.
+Defaulting to a blank string.` warnings and, less obviously, a corrupted
+key). See the header comment in `backend/.env.example` for details.
+
 The rest of `backend/.env.example`'s defaults (`DATABASE_URL`, `REDIS_URL`,
 etc.) already point at the other Compose services by their service names —
 leave those as-is for Compose use.
@@ -86,6 +92,12 @@ and `sveltekit`.
 | Backend API | http://localhost:8001/api |
 | Backend admin | http://localhost:8001/admin |
 | qBittorrent WebUI | http://localhost:8080 |
+
+**Django admin login**: no account exists yet — create one:
+
+```bash
+docker compose exec django python manage.py createsuperuser
+```
 
 **First qBittorrent login**: it generates a random temporary password on
 first boot — check `docker compose logs qbittorrent` for it, log in as
