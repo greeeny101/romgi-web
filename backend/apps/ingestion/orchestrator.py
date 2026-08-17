@@ -129,6 +129,35 @@ def scrape_platform_source(
     return source_id, n_entries, n_links
 
 
+def scrape_platform_source_with_progress(
+    writer: CatalogWriter,
+    registry,
+    platform: str,
+    platform_entry: dict[str, Any],
+    ctx: BuildContext,
+) -> tuple[str, int, int]:
+    """Same unit of work as scrape_platform_source, wrapped with live
+    SourceHealth progress (notes + status='running') before and after the
+    pair. Shared by run_ingestion_sync's loop and tasks.scrape_source_platform
+    (one Celery chord member) so the two execution paths' progress text can't
+    diverge. Status stays 'running' on error (only notes change) so a single
+    failing platform doesn't flap the badge when other platforms for the
+    same source succeed."""
+    source_id, _config = build_platform_config(platform_entry)
+    writer.record_source_progress(source_id, notes=f"Scraping {platform}...")
+    try:
+        source_id, n_entries, n_links = scrape_platform_source(
+            writer, registry, platform, platform_entry, ctx
+        )
+    except Exception as exc:
+        writer.record_source_progress(source_id, notes=f"{platform}: error — {exc}")
+        raise
+    writer.record_source_progress(
+        source_id, notes=f"{platform}: {n_entries} entries, {n_links} links scraped"
+    )
+    return source_id, n_entries, n_links
+
+
 def run_entry_grouping(writer: CatalogWriter) -> int:
     strategies = load_strategies()
     if not strategies:
@@ -175,7 +204,7 @@ def run_ingestion_sync(
         source_id, config = build_platform_config(platform_entry)
         print(f"  [{platform}] {source_id} ({config.format})...", file=stdout)
         try:
-            source_id, n_entries, n_links = scrape_platform_source(
+            source_id, n_entries, n_links = scrape_platform_source_with_progress(
                 writer, registry, platform, platform_entry, ctx
             )
         except Exception as exc:  # noqa: BLE001 - one bad source shouldn't kill the run
@@ -198,10 +227,14 @@ def run_ingestion_sync(
     for source_id in registry.ids():
         stats = source_stats.get(source_id)
         if stats is None:
-            writer.record_source_health(source_id, status="unknown", reason="not run in this build")
+            writer.record_source_health(source_id, status="unknown", notes="not run in this build")
         else:
             writer.record_source_health(
-                source_id, status="ok", entry_count=stats["entries"], link_count=stats["links"]
+                source_id,
+                status="ok",
+                notes=f"Completed: {stats['entries']} entries, {stats['links']} links",
+                entry_count=stats["entries"],
+                link_count=stats["links"],
             )
 
     return source_stats

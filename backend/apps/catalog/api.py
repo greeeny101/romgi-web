@@ -56,7 +56,7 @@ def list_source_health(request):
             source_id=h.source_id,
             status=h.status,
             last_checked_at=h.last_checked_at.isoformat() if h.last_checked_at else None,
-            reason=h.reason,
+            notes=h.notes,
             entry_count=h.entry_count,
             link_count=h.link_count,
         )

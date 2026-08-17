@@ -78,12 +78,12 @@ class Source(models.Model):
 
 
 class SourceHealth(models.Model):
-    STATUS_CHOICES = [("ok", "ok"), ("error", "error"), ("unknown", "unknown")]
+    STATUS_CHOICES = [("ok", "ok"), ("error", "error"), ("unknown", "unknown"), ("running", "running")]
 
     source = models.OneToOneField(Source, primary_key=True, on_delete=models.CASCADE, related_name="health")
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="unknown")
     last_checked_at = models.DateTimeField(null=True, blank=True)
-    reason = models.TextField(null=True, blank=True)
+    notes = models.TextField(null=True, blank=True)
     entry_count = models.IntegerField(default=0)
     link_count = models.IntegerField(default=0)
 

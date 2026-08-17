@@ -51,7 +51,7 @@ def scrape_source_platform(self, build_id: int, platform: str, platform_entry: d
     registry = orchestrator.load_registry_for_pipeline()
     ctx = BuildContext(use_cached=use_cached)
 
-    source_id, n_entries, n_links = orchestrator.scrape_platform_source(
+    source_id, n_entries, n_links = orchestrator.scrape_platform_source_with_progress(
         writer, registry, platform, platform_entry, ctx
     )
     return {"source_id": source_id, "entries": n_entries, "links": n_links}
@@ -79,10 +79,14 @@ def _after_ingestion(results: list[dict], build_id: int) -> None:
     for source_id in registry.ids():
         stats = source_stats.get(source_id)
         if stats is None:
-            writer.record_source_health(source_id, status="unknown", reason="not run in this build")
+            writer.record_source_health(source_id, status="unknown", notes="not run in this build")
         else:
             writer.record_source_health(
-                source_id, status="ok", entry_count=stats["entries"], link_count=stats["links"]
+                source_id,
+                status="ok",
+                notes=f"Completed: {stats['entries']} entries, {stats['links']} links",
+                entry_count=stats["entries"],
+                link_count=stats["links"],
             )
 
     finalize_catalog_build.run(build_id)

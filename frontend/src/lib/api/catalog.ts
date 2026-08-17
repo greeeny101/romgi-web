@@ -22,9 +22,9 @@ export interface Source {
 
 export interface SourceHealth {
 	source_id: string;
-	status: 'ok' | 'error' | 'unknown';
+	status: 'ok' | 'error' | 'unknown' | 'running';
 	last_checked_at: string | null;
-	reason: string | null;
+	notes: string | null;
 	entry_count: number;
 	link_count: number;
 }

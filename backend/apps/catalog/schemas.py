@@ -25,7 +25,7 @@ class SourceHealthOut(Schema):
     source_id: str
     status: str
     last_checked_at: str | None
-    reason: str | None
+    notes: str | None
     entry_count: int
     link_count: int
 

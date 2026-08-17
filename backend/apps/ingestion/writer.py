@@ -26,6 +26,7 @@ from apps.catalog.models import (
 )
 
 from . import pipeline_path
+from . import progress as ingestion_progress
 
 pipeline_path.ensure()
 
@@ -53,21 +54,35 @@ class CatalogWriter:
             ),
         )
 
+    def _update_health(self, source_id: str, defaults: dict[str, Any]) -> None:
+        """Single choke point for every SourceHealth write: persists the
+        row, then broadcasts it. Omitting entry_count/link_count from
+        `defaults` (as record_source_progress does) leaves those columns
+        untouched on an existing row, since update_or_create only sets keys
+        present in `defaults`."""
+        obj, _ = SourceHealth.objects.update_or_create(source_id=source_id, defaults=defaults)
+        ingestion_progress.push_source_health(obj)
+
+    def record_source_progress(self, source_id: str, *, notes: str, status: str = "running") -> None:
+        """Live, per-(platform, source)-pair update — called many times
+        across a run. Never touches entry_count/link_count."""
+        self._update_health(source_id, dict(status=status, notes=notes, last_checked_at=timezone.now()))
+
     def record_source_health(
         self,
         source_id: str,
         status: str,
         *,
-        reason: str | None = None,
+        notes: str | None = None,
         entry_count: int = 0,
         link_count: int = 0,
     ) -> None:
-        SourceHealth.objects.update_or_create(
-            source_id=source_id,
-            defaults=dict(
+        self._update_health(
+            source_id,
+            dict(
                 status=status,
                 last_checked_at=timezone.now(),
-                reason=reason,
+                notes=notes,
                 entry_count=entry_count,
                 link_count=link_count,
             ),

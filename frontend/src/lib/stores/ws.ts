@@ -4,12 +4,14 @@ const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL ?? 'ws://localhost:8001/ws'
 
 export type WsHandler = (type: string, data: unknown) => void;
 
-class DownloadsSocket {
+export class ReconnectingSocket {
 	private socket: WebSocket | null = null;
 	private handlers = new Set<WsHandler>();
 	private reconnectDelay = 1000;
 	private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 	private shouldRun = false;
+
+	constructor(private path: string) {}
 
 	connect() {
 		this.shouldRun = true;
@@ -23,7 +25,7 @@ class DownloadsSocket {
 		const tokens = auth.peek();
 		if (!tokens || !this.shouldRun) return;
 
-		const socket = new WebSocket(`${WS_BASE_URL}/downloads/?token=${encodeURIComponent(tokens.access)}`);
+		const socket = new WebSocket(`${WS_BASE_URL}${this.path}?token=${encodeURIComponent(tokens.access)}`);
 		this.socket = socket;
 
 		socket.onopen = () => {
@@ -58,4 +60,5 @@ class DownloadsSocket {
 	}
 }
 
-export const downloadsSocket = new DownloadsSocket();
+export const downloadsSocket = new ReconnectingSocket('/downloads/');
+export const ingestionSocket = new ReconnectingSocket('/ingestion/');

@@ -1,14 +1,17 @@
 <script lang="ts">
+	import { onDestroy, onMount } from 'svelte';
 	import { Spinner, Table, TableBody, TableBodyCell, TableBodyRow, TableHead, TableHeadCell } from 'flowbite-svelte';
 	import { catalogApi, type Source, type SourceHealth } from '$lib/api/catalog';
 	import { ApiError } from '$lib/api/client';
 	import ErrorView from '$lib/components/common/ErrorView.svelte';
 	import SourceHealthBadge from '$lib/components/sources/SourceHealthBadge.svelte';
+	import { ingestionSocket } from '$lib/stores/ws';
 
 	let sources = $state<Source[]>([]);
 	let health = $state<Map<string, SourceHealth>>(new Map());
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+	let unsubscribeWs: (() => void) | null = null;
 
 	async function load() {
 		loading = true;
@@ -26,6 +29,21 @@
 
 	$effect(() => {
 		load();
+	});
+
+	onMount(() => {
+		ingestionSocket.connect();
+		unsubscribeWs = ingestionSocket.subscribe((type, data) => {
+			if (type === 'source.health') {
+				const h = data as SourceHealth;
+				health = new Map(health).set(h.source_id, h);
+			}
+		});
+	});
+
+	onDestroy(() => {
+		unsubscribeWs?.();
+		ingestionSocket.disconnect();
 	});
 
 	function formatDate(iso: string | null): string {
@@ -73,8 +91,8 @@
 							<TableBodyCell>{h?.entry_count ?? '—'}</TableBodyCell>
 							<TableBodyCell>{h?.link_count ?? '—'}</TableBodyCell>
 							<TableBodyCell>{formatDate(h?.last_checked_at ?? null)}</TableBodyCell>
-							<TableBodyCell class="max-w-xs truncate text-xs text-gray-500 dark:text-gray-400">
-								{h?.reason ?? ''}
+							<TableBodyCell class="max-w-xs truncate text-xs text-gray-500 dark:text-gray-400" title={h?.notes ?? ''}>
+								{h?.notes ?? ''}
 							</TableBodyCell>
 						</TableBodyRow>
 					{/each}
