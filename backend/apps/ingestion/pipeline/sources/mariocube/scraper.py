@@ -93,7 +93,7 @@ def parse_listing_rows(response: str) -> Generator[tuple[str, str, int], None, N
     """Yield (filename, href, size_bytes) tuples from the HTML listing table."""
     for match in _ROW_RE.finditer(response):
         filename = html.unescape(match.group('filename'))
-        href = match.group('href')
+        href = html.unescape(match.group('href'))
         size_raw = match.group('size')
         size_bytes = int(size_raw) if size_raw.isdigit() else 0
         yield filename, href, size_bytes
