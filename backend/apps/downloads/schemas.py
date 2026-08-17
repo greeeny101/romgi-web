@@ -12,6 +12,7 @@ class DownloadTaskOut(Schema):
     slug: str
     title: str
     platform_id: str
+    platform_name: str
     status: str
     progress: float
     downloaded_bytes: int
@@ -20,6 +21,8 @@ class DownloadTaskOut(Schema):
     link_name: str
     link_host: str
     link_is_torrent: bool
+    source_id: str | None
+    source_name: str | None
     error: str
     group_key: str
     group_title: str

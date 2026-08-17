@@ -6,6 +6,7 @@
 	import { catalogApi, type EntryDetail, type Link as CatalogLink, type Platform } from '$lib/api/catalog';
 	import { libraryApi } from '$lib/api/library';
 	import { downloadsApi } from '$lib/api/downloads';
+	import { downloads } from '$lib/stores/downloads';
 	import { metadataApi, type GameMetadata } from '$lib/api/metadata';
 	import { ApiError } from '$lib/api/client';
 	import ErrorView from '$lib/components/common/ErrorView.svelte';
@@ -23,8 +24,13 @@
 	let error = $state<string | null>(null);
 	let enqueuingLinkId = $state<number | null>(null);
 
+	const ACTIVE_STATUSES = ['pending', 'downloading', 'paused', 'extracting'];
+	let alreadyQueued = $derived(
+		$downloads.some((t) => t.slug === entry?.slug && ACTIVE_STATUSES.includes(t.status))
+	);
+
 	async function enqueueLink(link: CatalogLink) {
-		if (!entry) return;
+		if (!entry || alreadyQueued) return;
 		enqueuingLinkId = link.id;
 		try {
 			await downloadsApi.enqueue({ slug: entry.slug, link_id: link.id });
@@ -115,6 +121,13 @@
 			<h2 class="mt-4 text-sm font-semibold tracking-wide text-gray-500 uppercase dark:text-gray-400">
 				Download links
 			</h2>
+			{#if alreadyQueued}
+				<p class="text-xs text-gray-500 dark:text-gray-400">
+					Already in your <a href="/downloads" class="text-primary-600 hover:underline dark:text-primary-400"
+						>download queue</a
+					>.
+				</p>
+			{/if}
 			{#if links.length === 0}
 				<p class="text-sm text-gray-500 dark:text-gray-400">No links found for this entry.</p>
 			{:else}
@@ -135,11 +148,11 @@
 							<button
 								type="button"
 								class="flex shrink-0 items-center gap-1 rounded bg-primary-600 px-2 py-1 text-xs text-white hover:bg-primary-700 disabled:opacity-50"
-								disabled={enqueuingLinkId === link.id}
+								disabled={enqueuingLinkId === link.id || alreadyQueued}
 								onclick={() => enqueueLink(link)}
 							>
 								<DownloadOutline class="h-3.5 w-3.5" />
-								{enqueuingLinkId === link.id ? 'Starting…' : 'Download'}
+								{enqueuingLinkId === link.id ? 'Starting…' : alreadyQueued ? 'Queued' : 'Download'}
 							</button>
 						</li>
 					{/each}

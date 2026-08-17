@@ -5,6 +5,9 @@
 .DS_Store
 Thumbs.db
 
+# Local History (VS Code extension) — per-save snapshots, local only
+.history/
+
 # Working plan doc from the initial design session — references an
 # absolute local path and isn't meant as polished public documentation
 # (README.md and KNOWN_ISSUES.md supersede it). Kept locally, not published.

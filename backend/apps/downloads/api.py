@@ -15,13 +15,17 @@ from ninja import Query, Router
 from ninja.errors import HttpError
 from ninja_jwt.authentication import JWTAuth
 
-from apps.catalog.models import CatalogBuild, Entry, EntryGroup, Link
+from apps.catalog.models import CatalogBuild, Entry, EntryGroup, Link, Source
 
 from .models import DownloadTask
 from .schemas import DownloadTaskOut, EnqueueIn, VerifyResultOut
 from .tasks import dispatch_next_for_user
 
 router = Router(tags=["downloads"], auth=JWTAuth())
+
+# A task in one of these states already occupies a slot for its slug — a
+# fresh enqueue of the same title would just duplicate it in the queue.
+ACTIVE_STATUSES = ("pending", "downloading", "paused", "extracting")
 
 
 def _active_build() -> CatalogBuild:
@@ -31,12 +35,23 @@ def _active_build() -> CatalogBuild:
     return build
 
 
-def _out(task: DownloadTask) -> DownloadTaskOut:
+def _active_task_for(user, slug: str) -> DownloadTask | None:
+    return DownloadTask.objects.filter(user=user, slug=slug, status__in=ACTIVE_STATUSES).first()
+
+
+def _out(task: DownloadTask, sources_by_id: dict[str, str] | None = None) -> DownloadTaskOut:
+    source_name = None
+    if task.link_source_id:
+        if sources_by_id is not None:
+            source_name = sources_by_id.get(task.link_source_id)
+        else:
+            source_name = Source.objects.filter(id=task.link_source_id).values_list("name", flat=True).first()
     return DownloadTaskOut(
         id=task.id,
         slug=task.slug,
         title=task.title,
         platform_id=task.platform_id,
+        platform_name=task.platform.name,
         status=task.status,
         progress=task.progress,
         downloaded_bytes=task.downloaded_bytes,
@@ -45,6 +60,8 @@ def _out(task: DownloadTask) -> DownloadTaskOut:
         link_name=task.link_name,
         link_host=task.link_host,
         link_is_torrent=task.link_is_torrent,
+        source_id=task.link_source_id or None,
+        source_name=source_name or task.link_source_id or None,
         error=task.error,
         group_key=task.group_key,
         group_title=task.group_title,
@@ -86,18 +103,27 @@ def enqueue(request, payload: EnqueueIn):
     if payload.group_id is not None:
         group = get_object_or_404(EntryGroup, id=payload.group_id, build=build)
         created = None
+        any_active = False
         for member in group.members.select_related("entry").order_by("member_index"):
+            if _active_task_for(request.user, member.entry.slug):
+                any_active = True
+                continue
             link = member.entry.links.order_by("-source__priority").first()
             if link is None:
                 continue
             task = _enqueue_one(request.user, member.entry, link, group=group, group_index=member.member_index)
             created = created or task
         if created is None:
+            if any_active:
+                raise HttpError(409, "This title is already in your download queue.")
             raise HttpError(404, "No downloadable links found for this group.")
         dispatch_next_for_user(request.user.id)
         return _out(created)
 
     entry = get_object_or_404(Entry, slug=payload.slug, build=build)
+    if _active_task_for(request.user, entry.slug):
+        raise HttpError(409, f'"{entry.title}" is already in your download queue.')
+
     if payload.link_id is not None:
         link = get_object_or_404(Link, id=payload.link_id, entry=entry)
     else:
@@ -112,10 +138,11 @@ def enqueue(request, payload: EnqueueIn):
 
 @router.get("", response=list[DownloadTaskOut])
 def list_downloads(request, status: str = Query(None)):
-    qs = DownloadTask.objects.filter(user=request.user)
+    qs = DownloadTask.objects.filter(user=request.user).select_related("platform")
     if status:
         qs = qs.filter(status=status)
-    return [_out(t) for t in qs]
+    sources_by_id = dict(Source.objects.values_list("id", "name"))
+    return [_out(t, sources_by_id) for t in qs]
 
 
 @router.get("/{task_id}", response=DownloadTaskOut)
