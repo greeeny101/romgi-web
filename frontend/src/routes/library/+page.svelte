@@ -17,6 +17,7 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let verifying = $state<number | null>(null);
+	let saving = $state<number | null>(null);
 
 	async function load() {
 		loading = true;
@@ -44,6 +45,24 @@
 			}
 		} finally {
 			verifying = null;
+		}
+	}
+
+	async function saveFile(task: DownloadTask) {
+		if (saving !== null) return;
+		saving = task.id;
+		try {
+			const { blob, filename } = await downloadsApi.file(task.id);
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = filename ?? task.title;
+			document.body.appendChild(a);
+			a.click();
+			a.remove();
+			URL.revokeObjectURL(url);
+		} finally {
+			saving = null;
 		}
 	}
 
@@ -160,14 +179,14 @@
 						</p>
 					</div>
 					<div class="flex shrink-0 items-center gap-3">
-						<a
-							href={downloadsApi.fileUrl(task.id)}
-							class="text-xs text-primary-600 hover:underline dark:text-primary-400"
-							target="_blank"
-							rel="noopener"
+						<button
+							type="button"
+							class="text-xs text-primary-600 hover:underline disabled:opacity-50 dark:text-primary-400"
+							disabled={saving === task.id}
+							onclick={() => saveFile(task)}
 						>
-							Save file
-						</a>
+							{saving === task.id ? 'Saving…' : 'Save file'}
+						</button>
 						<button
 							type="button"
 							class="text-xs text-gray-500 hover:text-gray-900 disabled:opacity-50 dark:hover:text-white"

@@ -36,6 +36,7 @@ class TorrentFile:
     name: str
     size: int
     priority: int
+    progress: float
 
 
 # qBittorrent's file-priority scale (0/1/6/7) — distinct from libtorrent4j's
@@ -78,7 +79,7 @@ class TorrentClient:
 
     def files(self, torrent_hash: str) -> list[TorrentFile]:
         return [
-            TorrentFile(id=i, index=i, name=f.name, size=f.size, priority=f.priority)
+            TorrentFile(id=i, index=i, name=f.name, size=f.size, priority=f.priority, progress=f.progress)
             for i, f in enumerate(self._client.torrents_files(torrent_hash=torrent_hash))
         ]
 

@@ -15,11 +15,14 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import time
 
+import qbittorrentapi
 from celery import shared_task
 from django.conf import settings as django_settings
 
+from apps.downloads.debrid.magnet import infohash_from_magnet
 from apps.downloads.models import DownloadTask
 from apps.downloads.progress import push_progress, push_status
 from apps.downloads.tasks import _finish_download, _handle_download_failure, task_dir
@@ -51,9 +54,28 @@ def _remote_dir(task_id: int) -> str:
     return f"{django_settings.QBITTORRENT_SAVE_PATH.rstrip('/')}/{task_id}"
 
 
+def _other_active_tasks(torrent_hash: str, exclude_task_id: int | None = None) -> bool:
+    """MiNERVA bundles thousands of games into a single torrent (one
+    infohash shared across every Link that points into it), and qBittorrent
+    dedupes torrents by infohash — so two unrelated DownloadTasks can end up
+    riding the same qBittorrent torrent, each wanting a different file out
+    of it. True if some other task is still actively downloading from it."""
+    qs = DownloadTask.objects.filter(status="downloading", torrent_hash=torrent_hash)
+    if exclude_task_id is not None:
+        qs = qs.exclude(id=exclude_task_id)
+    return qs.exists()
+
+
+def _release_torrent(torrent_hash: str, exclude_task_id: int | None = None) -> None:
+    """Only remove the torrent from qBittorrent once nothing else is still
+    downloading from it — see _other_active_tasks."""
+    if not _other_active_tasks(torrent_hash, exclude_task_id):
+        client.delete(torrent_hash, delete_files=False)
+
+
 def _fail_torrent(task: DownloadTask, error_text: str) -> None:
     if task.torrent_hash:
-        client.delete(task.torrent_hash, delete_files=False)
+        _release_torrent(task.torrent_hash, exclude_task_id=task.id)
         task.torrent_hash = ""
         task.save(update_fields=["torrent_hash", "updated_at"])
     _handle_download_failure(task, error_text)
@@ -68,16 +90,26 @@ def add_torrent(task_id: int) -> None:
         _fail_torrent(task, "This torrent has no magnet link available")
         return
 
+    # MiNERVA bundles thousands of games into one shared torrent, so another
+    # task may already be downloading a different file out of this exact
+    # infohash. Adopt it directly by hash rather than re-adding —
+    # qBittorrent rejects a duplicate add for an infohash it already has
+    # with a 409, which used to fail this task outright.
+    infohash = infohash_from_magnet(task.link_torrent_magnet)
     tag = _tag_for(task.id)
     try:
-        client.add(magnet=task.link_torrent_magnet, tag=tag, save_path=_remote_dir(task.id))
+        handle = client.info(infohash) if infohash else None
+        if handle is None:
+            try:
+                client.add(magnet=task.link_torrent_magnet, tag=tag, save_path=_remote_dir(task.id))
+            except qbittorrentapi.Conflict409Error:
+                pass  # lost the race to another task adding the same infohash — adopt it below
 
-        handle = None
-        for _ in range(20):  # ~10s at 0.5s apiece — qBittorrent needs a moment to register the add
-            handle = client.find_by_tag(tag)
-            if handle is not None:
-                break
-            time.sleep(0.5)
+            for _ in range(20):  # ~10s at 0.5s apiece — qBittorrent needs a moment to register the add
+                handle = client.info(infohash) if infohash else client.find_by_tag(tag)
+                if handle is not None:
+                    break
+                time.sleep(0.5)
     except Exception as exc:
         # An uncaught error here used to just crash this task and leave
         # the DownloadTask stuck at status="downloading" forever — no
@@ -105,7 +137,12 @@ def apply_selective_priority(self, task_id: int) -> None:
     """File priorities can't be set until qBittorrent has the torrent's
     metadata (file list) — retries until torrents_files() returns rows,
     the Web-API-polling equivalent of TorrentServiceImpl's
-    METADATA_RECEIVED-triggered replay of pendingPriorities."""
+    METADATA_RECEIVED-triggered replay of pendingPriorities.
+
+    Priorities are set from every task currently sharing this torrent_hash,
+    not just this one — a shared torrent (see _other_active_tasks) means
+    another in-flight task may already have its own wanted file selected
+    here, and overwriting that back to skip would stall it."""
     task = DownloadTask.objects.get(id=task_id)
     if task.status != "downloading" or not task.torrent_hash:
         return
@@ -114,48 +151,76 @@ def apply_selective_priority(self, task_id: int) -> None:
     if not files:
         raise self.retry()
 
-    wanted_index = task.link_torrent_file_index
+    wanted_indexes = set(
+        DownloadTask.objects.filter(status="downloading", torrent_hash=task.torrent_hash).values_list(
+            "link_torrent_file_index", flat=True
+        )
+    )
+    download_everything = None in wanted_indexes
     for f in files:
-        priority = PRIORITY_DOWNLOAD if (wanted_index is None or f.index == wanted_index) else PRIORITY_SKIP
+        priority = PRIORITY_DOWNLOAD if (download_everything or f.index in wanted_indexes) else PRIORITY_SKIP
         client.set_file_priority(task.torrent_hash, f.id, priority)
 
 
 @shared_task
 def poll_active_torrents() -> None:
     """Beat, every few seconds — ports TorrentServiceImpl's 1s progress-poll
-    loop. One qBittorrent call per active hash; pushes progress over
+    loop. Two qBittorrent calls per active hash; pushes progress over
     Channels (peers/seeds are live-only — never persisted, see
     downloads.progress.push_progress) and hands off finished torrents to
-    finalize_completed_torrent."""
-    tasks = DownloadTask.objects.filter(status="downloading", link_is_torrent=True).exclude(torrent_hash="")
+    finalize_completed_torrent.
+
+    Progress/size/downloaded are read off this task's own wanted file, not
+    the torrent as a whole — MiNERVA's torrents bundle thousands of games
+    together, so the torrent-wide totals (info.size/info.downloaded) can be
+    orders of magnitude bigger than the one file this task actually wants,
+    and info.downloaded is a lifetime counter that never shrinks even after
+    file priorities narrow the selection back down."""
+    tasks = (
+        DownloadTask.objects.filter(status="downloading", link_is_torrent=True)
+        .exclude(torrent_hash="")
+        .select_related("platform")
+    )
     for task in tasks:
         info = client.info(task.torrent_hash)
         if info is None:
             continue
 
-        task.progress = info.progress
-        task.downloaded_bytes = int(info.downloaded)
-        task.total_bytes = int(info.size)
+        files = client.files(task.torrent_hash)
+        wanted_index = task.link_torrent_file_index
+        chosen = next((f for f in files if wanted_index is None or f.index == wanted_index), None)
+
+        if chosen is not None:
+            task.progress = chosen.progress
+            task.total_bytes = int(chosen.size)
+            task.downloaded_bytes = int(chosen.size * chosen.progress)
+        else:
+            # File listing not resolved yet (still racing apply_selective_priority) —
+            # fall back to the torrent-wide figures rather than showing nothing.
+            task.progress = info.progress
+            task.downloaded_bytes = int(info.downloaded)
+            task.total_bytes = int(info.size)
         task.bytes_per_second = int(info.dlspeed)
         task.save(update_fields=["progress", "downloaded_bytes", "total_bytes", "bytes_per_second", "updated_at"])
         push_progress(task, num_seeds=info.num_seeds, num_peers=info.num_leechs)
 
-        if info.progress >= 1.0 or info.state in FINISHED_STATES:
+        if task.progress >= 1.0 or (chosen is None and info.state in FINISHED_STATES):
             finalize_completed_torrent.delay(task.id)
 
 
 @shared_task
 def finalize_completed_torrent(task_id: int) -> None:
     """Ports _finishTorrentTask + TorrentServiceImpl's TORRENT_FINISHED
-    handler: stop the torrent immediately (never seed), copy the selected
-    file out of qBittorrent's save dir into the task's own staging dir,
-    then remove the torrent from qBittorrent (data on disk is untouched
-    otherwise — matches Kotlin's remove() without the delete-files flag)."""
+    handler: copy the selected file out of qBittorrent's save dir into the
+    task's own staging dir, then — if nothing else is still downloading
+    from this torrent (see _other_active_tasks) — stop it (never seed) and
+    remove it from qBittorrent (data on disk is untouched otherwise —
+    matches Kotlin's remove() without the delete-files flag). A shared
+    MiNERVA torrent with another task still pulling a different file out of
+    it is left running untouched."""
     task = DownloadTask.objects.get(id=task_id)
     if task.status != "downloading" or not task.torrent_hash:
         return
-
-    client.stop(task.torrent_hash)  # never seed — mirrors handle.pause() on TORRENT_FINISHED
 
     info = client.info(task.torrent_hash)
     files = client.files(task.torrent_hash)
@@ -173,9 +238,16 @@ def finalize_completed_torrent(task_id: int) -> None:
         return
 
     dest_path = os.path.join(task_dir(task.id), os.path.basename(chosen.name))
-    os.replace(source_path, dest_path)
+    # os.replace() requires source and dest on the same filesystem — in
+    # Compose, torrent_data and staged_files are separate volumes, so a
+    # torrent's finalize always hit EXDEV ("Invalid cross-device link").
+    # shutil.move() falls back to copy+delete across filesystems.
+    shutil.move(source_path, dest_path)
 
-    client.delete(task.torrent_hash, delete_files=False)
+    # Leave a torrent another task still wants running untouched.
+    if not _other_active_tasks(task.torrent_hash, exclude_task_id=task.id):
+        client.stop(task.torrent_hash)  # never seed — mirrors handle.pause() on TORRENT_FINISHED
+        client.delete(task.torrent_hash, delete_files=False)
     task.torrent_hash = ""
     task.save(update_fields=["torrent_hash", "updated_at"])
 
@@ -188,6 +260,8 @@ def cancel_torrent(torrent_hash: str) -> None:
     cancelled is an in-flight torrent, so qBittorrent doesn't keep seeding
     or occupying a slot for a task the user deleted. Takes the hash
     directly rather than a task_id — by the time this runs, the
-    DownloadTask row is already gone."""
+    DownloadTask row is already gone. Only actually removes it from
+    qBittorrent if no other task is still downloading a different file out
+    of the same shared torrent (see _other_active_tasks)."""
     if torrent_hash:
-        client.delete(torrent_hash, delete_files=False)
+        _release_torrent(torrent_hash)

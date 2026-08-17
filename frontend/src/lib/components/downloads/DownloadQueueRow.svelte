@@ -9,8 +9,31 @@
 	} from 'flowbite-svelte-icons';
 	import { downloadsApi, type DownloadTask } from '$lib/api/downloads';
 	import { downloads } from '$lib/stores/downloads';
+	import PlatformBadge from '$lib/components/platform/PlatformBadge.svelte';
 
 	let { task }: { task: DownloadTask } = $props();
+
+	let saving = $state(false);
+
+	async function saveFile() {
+		if (saving) return;
+		saving = true;
+		try {
+			const { blob, filename } = await downloadsApi.file(task.id);
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = filename ?? task.title;
+			document.body.appendChild(a);
+			a.click();
+			a.remove();
+			URL.revokeObjectURL(url);
+		} catch (err) {
+			console.error('Failed to download file', err);
+		} finally {
+			saving = false;
+		}
+	}
 
 	function formatBytes(n: number): string {
 		if (!n) return '0 B';
@@ -38,16 +61,22 @@
 	<div class="flex items-center justify-between gap-2">
 		<div class="min-w-0">
 			<p class="truncate font-medium text-gray-900 dark:text-white">{task.title}</p>
-			<p class="truncate text-xs text-gray-500 dark:text-gray-400">
+			<div class="mt-1 -ml-2.5 flex flex-wrap items-center gap-1.5">
+				<PlatformBadge name={task.platform_name} />
+				<Badge color="indigo" class="whitespace-nowrap">
+					{task.source_name ?? task.link_host}{#if task.link_is_torrent} &nbsp;· torrent{/if}
+				</Badge>
+			</div>
+			<p class="mt-1 truncate text-xs text-gray-500 dark:text-gray-400">
 				{task.link_name}
 				{#if task.total_bytes}
 					· {formatBytes(task.downloaded_bytes)} / {formatBytes(task.total_bytes)}
 				{/if}
 				{#if task.status === 'downloading' && task.bytes_per_second}
-					· {formatBytes(task.bytes_per_second)}/s
+					 · {formatBytes(task.bytes_per_second)}/s
 				{/if}
 				{#if task.link_is_torrent && task.status === 'downloading' && task.num_seeds != null}
-					· {task.num_seeds} seeds · {task.num_peers} peers
+					&nbsp;· {task.num_seeds} seeds · {task.num_peers} peers
 				{/if}
 			</p>
 		</div>
@@ -96,14 +125,14 @@
 			</button>
 		{/if}
 		{#if task.status === 'completed'}
-			<a
-				href={downloadsApi.fileUrl(task.id)}
-				class="flex items-center gap-1 text-xs text-primary-600 hover:underline dark:text-primary-400"
-				target="_blank"
-				rel="noopener"
+			<button
+				type="button"
+				class="flex items-center gap-1 text-xs text-primary-600 hover:underline disabled:opacity-50 dark:text-primary-400"
+				disabled={saving}
+				onclick={saveFile}
 			>
-				<FileZipSolid class="h-4 w-4" /> Save file
-			</a>
+				<FileZipSolid class="h-4 w-4" /> {saving ? 'Saving…' : 'Save file'}
+			</button>
 		{/if}
 		<button
 			type="button"

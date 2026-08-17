@@ -80,3 +80,48 @@ export function apiPut<T>(path: string, body?: unknown): Promise<T> {
 export function apiDelete<T>(path: string): Promise<T> {
 	return request<T>(path, { method: 'DELETE' });
 }
+
+function filenameFromDisposition(header: string | null): string | null {
+	if (!header) return null;
+	const utf8Match = /filename\*=UTF-8''([^;]+)/i.exec(header);
+	if (utf8Match) return decodeURIComponent(utf8Match[1]);
+	const plainMatch = /filename="?([^";]+)"?/i.exec(header);
+	return plainMatch ? plainMatch[1] : null;
+}
+
+/**
+ * Plain <a href> navigation can't attach the bearer token, so authenticated
+ * file downloads have to go through fetch + blob instead.
+ */
+export async function apiDownload(
+	path: string,
+	_retried = false
+): Promise<{ blob: Blob; filename: string | null }> {
+	const tokens = auth.peek();
+	const res = await fetch(`${API_BASE_URL}${path}`, {
+		headers: {
+			...(tokens ? { Authorization: `Bearer ${tokens.access}` } : {})
+		}
+	});
+
+	if (res.status === 401 && tokens && !_retried) {
+		const newAccess = await refreshAccessToken();
+		if (newAccess) {
+			return apiDownload(path, true);
+		}
+	}
+
+	if (!res.ok) {
+		let message = res.statusText;
+		try {
+			const body = await res.json();
+			message = body.detail ?? message;
+		} catch {
+			// response wasn't JSON — keep statusText
+		}
+		throw new ApiError(res.status, message);
+	}
+
+	const blob = await res.blob();
+	return { blob, filename: filenameFromDisposition(res.headers.get('Content-Disposition')) };
+}

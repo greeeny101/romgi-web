@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiPost } from './client';
+import { apiDelete, apiDownload, apiGet, apiPost } from './client';
 
 export type DownloadStatus = 'pending' | 'downloading' | 'paused' | 'extracting' | 'completed' | 'failed';
 
@@ -7,6 +7,7 @@ export interface DownloadTask {
 	slug: string;
 	title: string;
 	platform_id: string;
+	platform_name: string;
 	status: DownloadStatus;
 	progress: number;
 	downloaded_bytes: number;
@@ -15,6 +16,8 @@ export interface DownloadTask {
 	link_name: string;
 	link_host: string;
 	link_is_torrent: boolean;
+	source_id: string | null;
+	source_name: string | null;
 	error: string;
 	group_key: string;
 	group_title: string;
@@ -40,8 +43,6 @@ export interface VerifyResult {
 	message: string | null;
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8001/api';
-
 export const downloadsApi = {
 	list: (status?: DownloadStatus) => apiGet<DownloadTask[]>(status ? `/downloads?status=${status}` : '/downloads'),
 	get: (id: number) => apiGet<DownloadTask>(`/downloads/${id}`),
@@ -51,5 +52,5 @@ export const downloadsApi = {
 	retry: (id: number) => apiPost<DownloadTask>(`/downloads/${id}/retry`),
 	cancel: (id: number) => apiDelete<void>(`/downloads/${id}`),
 	verify: (id: number) => apiPost<VerifyResult>(`/downloads/${id}/verify`),
-	fileUrl: (id: number) => `${API_BASE_URL}/downloads/${id}/file`
+	file: (id: number) => apiDownload(`/downloads/${id}/file`)
 };
