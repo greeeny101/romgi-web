@@ -23,6 +23,7 @@ pipeline_path.ensure()
 from core import BuildContext, PlatformConfig, Source, load_registry  # noqa: E402
 from grouping import EntryRef, build_groups, load_strategies  # noqa: E402
 from parsers import gametdb, libretro, mame, no_intro, retroachievements, wii_rom_set_by_ghostware  # noqa: E402
+from utils.scrape_utils import close_browser  # noqa: E402
 
 from .writer import CatalogWriter  # noqa: E402
 
@@ -98,6 +99,17 @@ def scrape_platform_source(
 
     entries_out = source.scrape(platform, config, ctx)
 
+    # Playwright's sync API (used by the mariocube source) runs its driver
+    # on this same thread via greenlets, and leaves CPython's per-thread
+    # "current running loop" marker pointing at its own loop for as long as
+    # the browser stays open. Left uncleared, every Django ORM call made
+    # afterwards on this thread trips SynchronousOnlyOperation, since
+    # asyncio.get_running_loop() no longer raises — including this same
+    # platform's writer.insert_entry() calls below, and every other
+    # platform's DB work for the rest of the run. Close right after
+    # scraping, before any DB-touching code runs, not just once at the end.
+    close_browser()
+
     for parser_name, parser_flags in config.parsers.items():
         parser = PARSERS.get(parser_name)
         if not parser:
@@ -172,6 +184,11 @@ def run_ingestion_sync(
         stats = source_stats.setdefault(source_id, {"entries": 0, "links": 0})
         stats["entries"] += n_entries
         stats["links"] += n_links
+
+    # Belt-and-suspenders: scrape_platform_source() already closes the
+    # browser after each platform's scrape, but close again in case a
+    # source scraped without going through that path.
+    close_browser()
 
     grouped = run_entry_grouping(writer)
     print(f"Grouping: {grouped} entries grouped.", file=stdout)

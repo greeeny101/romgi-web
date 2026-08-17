@@ -331,8 +331,12 @@ def load_dbs() -> None:
 
         for dat_filename in data['dats']:
             # Open and read the .dat file
-            with open(f'data/libretro/{dat_filename}', encoding='utf-8') as f:
-                lines = f.readlines()
+            try:
+                with open(f'data/libretro/{dat_filename}', encoding='utf-8') as f:
+                    lines = f.readlines()
+            except FileNotFoundError:
+                print(f"Warning: {dat_filename} not found, skipping libretro enrichment for {platform}...")
+                continue
 
             game = None
             in_rom_section = False
