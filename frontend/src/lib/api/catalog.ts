@@ -1,4 +1,4 @@
-import { apiGet } from './client';
+import { apiGet, apiPost } from './client';
 
 export interface Platform {
 	id: string;
@@ -98,5 +98,7 @@ export const catalogApi = {
 	entries: (filters: EntryFilters = {}) =>
 		apiGet<PaginatedEntries>(`/catalog/entries${toQueryString(filters)}`),
 	entry: (slug: string) => apiGet<EntryDetail>(`/catalog/entries/${encodeURIComponent(slug)}`),
-	entryLinks: (slug: string) => apiGet<Link[]>(`/catalog/entries/${encodeURIComponent(slug)}/links`)
+	entryLinks: (slug: string) => apiGet<Link[]>(`/catalog/entries/${encodeURIComponent(slug)}/links`),
+	runSource: (sourceId: string) =>
+		apiPost<{ task_id: string }>(`/ingestion/sources/${encodeURIComponent(sourceId)}/run`)
 };

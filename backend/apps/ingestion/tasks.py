@@ -108,3 +108,20 @@ def finalize_catalog_build(build_id: int) -> None:
 @shared_task
 def gc_old_builds() -> int:
     return orchestrator.gc_old_builds(keep=settings.CATALOG_BUILD_RETENTION)
+
+
+@shared_task
+def run_single_source(source_id: str) -> int:
+    """Manual per-source re-run, triggered from the Sources page's "Run"
+    button (apps.ingestion.api.run_source). Unlike run_full_ingestion,
+    this must not wipe out every other source's catalog data — see
+    orchestrator.carry_forward_other_sources."""
+    build = CatalogBuild.objects.create(status="running")
+    try:
+        orchestrator.run_single_source_sync(build, source_id)
+    except Exception:
+        build.status = "failed"
+        build.save(update_fields=["status"])
+        raise
+    orchestrator.finalize_build(build)
+    return build.pk

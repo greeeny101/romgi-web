@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
-	import { Spinner, Table, TableBody, TableBodyCell, TableBodyRow, TableHead, TableHeadCell } from 'flowbite-svelte';
+	import { Button, Spinner, Table, TableBody, TableBodyCell, TableBodyRow, TableHead, TableHeadCell } from 'flowbite-svelte';
 	import { catalogApi, type Source, type SourceHealth } from '$lib/api/catalog';
 	import { ApiError } from '$lib/api/client';
 	import ErrorView from '$lib/components/common/ErrorView.svelte';
@@ -12,6 +12,8 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let unsubscribeWs: (() => void) | null = null;
+	let triggering = $state<Set<string>>(new Set());
+	let runErrors = $state<Map<string, string>>(new Map());
 
 	async function load() {
 		loading = true;
@@ -50,6 +52,31 @@
 		if (!iso) return 'Never';
 		return new Date(iso).toLocaleString();
 	}
+
+	function isRunning(sourceId: string): boolean {
+		return triggering.has(sourceId) || health.get(sourceId)?.status === 'running';
+	}
+
+	async function runSource(sourceId: string) {
+		triggering = new Set(triggering).add(sourceId);
+		runErrors = new Map(runErrors);
+		runErrors.delete(sourceId);
+		try {
+			await catalogApi.runSource(sourceId);
+			// Status flips to 'running' via the WS source.health event once
+			// the Celery task actually starts — triggering just covers the
+			// gap between clicking and that first event arriving.
+		} catch (err) {
+			runErrors = new Map(runErrors).set(
+				sourceId,
+				err instanceof ApiError ? err.message : 'Failed to start run.'
+			);
+		} finally {
+			const next = new Set(triggering);
+			next.delete(sourceId);
+			triggering = next;
+		}
+	}
 </script>
 
 <svelte:head>
@@ -73,6 +100,7 @@
 					<TableHeadCell>Links</TableHeadCell>
 					<TableHeadCell>Last checked</TableHeadCell>
 					<TableHeadCell>Notes</TableHeadCell>
+					<TableHeadCell>Run</TableHeadCell>
 				</TableHead>
 				<TableBody>
 					{#each sources as source (source.id)}
@@ -93,6 +121,14 @@
 							<TableBodyCell>{formatDate(h?.last_checked_at ?? null)}</TableBodyCell>
 							<TableBodyCell class="max-w-xs truncate text-xs text-gray-500 dark:text-gray-400" title={h?.notes ?? ''}>
 								{h?.notes ?? ''}
+							</TableBodyCell>
+							<TableBodyCell>
+								<Button size="xs" color="alternative" disabled={isRunning(source.id)} onclick={() => runSource(source.id)}>
+									{isRunning(source.id) ? 'Running…' : 'Run'}
+								</Button>
+								{#if runErrors.get(source.id)}
+									<p class="mt-1 max-w-[10rem] text-xs text-red-600 dark:text-red-400">{runErrors.get(source.id)}</p>
+								{/if}
 							</TableBodyCell>
 						</TableBodyRow>
 					{/each}

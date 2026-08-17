@@ -14,7 +14,7 @@ from typing import Any, Iterable
 
 import yaml
 
-from apps.catalog.models import CatalogBuild
+from apps.catalog.models import CatalogBuild, Entry, Link, RegionEntry
 
 from . import pipeline_path
 
@@ -238,6 +238,129 @@ def run_ingestion_sync(
             )
 
     return source_stats
+
+
+def carry_forward_other_sources(new_build: CatalogBuild, exclude_source_id: str) -> None:
+    """Seeds `new_build` with every Entry/RegionEntry/Link from the current
+    active build except Links belonging to `exclude_source_id` — used by a
+    single-source manual re-run (apps.ingestion.tasks.run_single_source) so
+    it doesn't wipe out every other source's catalog data. A normal
+    ingestion run always covers every source in one pass and expects to be
+    the *entire* catalog; refreshing one source alone would otherwise
+    finalize a build containing only that source, discarding the rest.
+    Note a single Entry can carry Links from multiple sources (the same
+    title scraped by two sources coalesces into one Entry — see
+    CatalogWriter.insert_entry), so this filters at the Link level, not
+    by excluding whole Entries."""
+    old_build = CatalogBuild.objects.filter(status="active").order_by("-started_at").first()
+    if old_build is None:
+        return
+
+    old_entries = list(Entry.objects.filter(build=old_build))
+    new_entries = [
+        Entry(
+            slug=e.slug,
+            build=new_build,
+            rom_id=e.rom_id,
+            title=e.title,
+            platform_id=e.platform_id,
+            boxart_url=e.boxart_url,
+            ra_game_id=e.ra_game_id,
+            ra_num_achievements=e.ra_num_achievements,
+        )
+        for e in old_entries
+    ]
+    created = Entry.objects.bulk_create(new_entries, batch_size=2000)
+    id_map = {old.id: new.id for old, new in zip(old_entries, created)}
+
+    region_rows = RegionEntry.objects.filter(entry__build=old_build).values_list("entry_id", "region_id")
+    RegionEntry.objects.bulk_create(
+        [RegionEntry(entry_id=id_map[eid], region_id=rid) for eid, rid in region_rows if eid in id_map],
+        batch_size=2000,
+        ignore_conflicts=True,
+    )
+
+    old_links = Link.objects.filter(entry__build=old_build).exclude(source_id=exclude_source_id)
+    new_links = [
+        Link(
+            entry_id=id_map[link.entry_id],
+            name=link.name,
+            type=link.type,
+            format=link.format,
+            url=link.url,
+            filename=link.filename,
+            host=link.host,
+            size=link.size,
+            size_str=link.size_str,
+            source_url=link.source_url,
+            source_id=link.source_id,
+            requires_auth=link.requires_auth,
+            torrent_id=link.torrent_id,
+            torrent_file_index=link.torrent_file_index,
+            torrent_file_path=link.torrent_file_path,
+        )
+        for link in old_links.iterator(chunk_size=2000)
+        if link.entry_id in id_map
+    ]
+    Link.objects.bulk_create(new_links, batch_size=2000)
+
+
+def delete_empty_entries(build: CatalogBuild) -> int:
+    """Drops Entry rows left with zero Links after a single-source
+    carry-forward + re-scrape — covers content the refreshed source used
+    to provide but no longer does (delisted, moved, etc.)."""
+    from django.db.models import Count
+
+    qs = Entry.objects.filter(build=build).annotate(_link_count=Count("links")).filter(_link_count=0)
+    count = qs.count()
+    if count:
+        qs.delete()
+    return count
+
+
+def run_single_source_sync(new_build: CatalogBuild, source_id: str) -> tuple[int, int]:
+    """Carry-forward + single-source re-scrape — the core of a manual
+    per-source "Run" trigger (apps.ingestion.tasks.run_single_source).
+    Does not finalize the build; the caller decides when."""
+    registry = load_registry_for_pipeline()
+    writer = CatalogWriter(new_build)
+    for manifest in registry.manifests.values():
+        writer.register_source(manifest)
+
+    carry_forward_other_sources(new_build, exclude_source_id=source_id)
+
+    platforms = load_platforms()
+    ctx = BuildContext(use_cached=False)
+    n_entries = n_links = 0
+    for platform, platform_entry in iter_platform_source_pairs(platforms, [source_id]):
+        try:
+            _, entries, links = scrape_platform_source_with_progress(
+                writer, registry, platform, platform_entry, ctx
+            )
+        except Exception as exc:  # noqa: BLE001 - one bad platform shouldn't kill the run
+            writer.record_source_progress(source_id, notes=f"{platform}: error — {exc}")
+            continue
+        n_entries += entries
+        n_links += links
+
+    close_browser()
+
+    deleted = delete_empty_entries(new_build)
+    if deleted:
+        writer.record_source_progress(
+            source_id, notes=f"Dropped {deleted} entries no longer provided by this source"
+        )
+
+    run_entry_grouping(writer)
+    writer.refresh_search_vectors()
+    writer.record_source_health(
+        source_id,
+        status="ok",
+        notes=f"Manual run: {n_entries} entries, {n_links} links",
+        entry_count=n_entries,
+        link_count=n_links,
+    )
+    return n_entries, n_links
 
 
 def finalize_build(build: CatalogBuild) -> None:
