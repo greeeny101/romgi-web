@@ -83,12 +83,21 @@ credentials were available.
 
 ## Smoke-tested, not exercised at real scale or duration
 
-- **Catalog ingestion**: only the MarioCube source has actually been run
-  against live data (3,062 entries, confirmed `ok` on the Sources page).
-  MiNERVA, NoPayStation, and Internet Archive scrapers exist (ported from
-  the original app) but have never been run end-to-end here. Run
+- **Catalog ingestion**: MarioCube (3,062 entries — since re-verified after
+  a stale-HTML-regex fix) and NoPayStation (14,268 entries / 28,528 links,
+  `psv` platform) have been run against live data and confirmed `ok` on
+  the Sources page. MiNERVA and Internet Archive scrapers exist (ported
+  from the original app) but have never been run end-to-end here. Run
   `python manage.py ingest_catalog --sources <id>` for each before relying
   on them.
+  - NoPayStation's generated RAP/ZRIF key files used to link to
+    `raw.githubusercontent.com/caprado/romgi/...` — the *original* app's
+    fork, matching its now-abandoned "commit the built catalog back to
+    GitHub" model. Every generated link 404ed. Fixed: keys are now written
+    to `NOPAYSTATION_KEYS_DIR` and proxied by a new endpoint,
+    `apps.ingestion.api.get_ingestion_key` — same "always proxy, never
+    expose the raw path" pattern `apps.downloads.api` uses for staged
+    downloads.
 - **The full Docker Compose stack together.** Every service (all 4
   `celery-worker*` split by queue, `django`, `qbittorrent`, `sveltekit`)
   was individually confirmed to build and serve/respond correctly this

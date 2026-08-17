@@ -2,8 +2,8 @@
 NoPayStation source plugin.
 
 Scrapes the NoPayStation TSV database for PS3/PSV titles. Generates RAP
-(PS3) and ZRIF (PSV) key files into static/content/ alongside the
-catalog DB on the GitHub raw mirror.
+(PS3) and ZRIF (PSV) key files locally, served back via
+apps.ingestion.api.get_ingestion_key — see KEYS_DIR/KEYS_BASE_URL below.
 """
 import os
 import csv
@@ -28,15 +28,26 @@ REGIONS_MAP = {
     'JP': 'jp'
 }
 
-# Base URL for static content hosted in the repository
-MAIN_SITE = 'https://raw.githubusercontent.com/caprado/romgi/main/db'
+# Where generated RAP/ZRIF key files get written, and the base URL they're
+# served from — apps.ingestion.api.get_ingestion_key proxies this same
+# directory. Not `static/content/...`: this project doesn't commit
+# generated ingestion artefacts back to a repo the way the original app
+# did (see CatalogBuild), so there's nothing to serve those from other
+# than this app itself. Read directly via os.environ (not django.conf.settings)
+# to keep this pipeline framework-agnostic, matching minerva/scraper.py's
+# MINERVA_INDEX_TXT/MINERVA_HASHES_DB convention — settings.py defines the
+# same NOPAYSTATION_KEYS_DIR default for the Django-facing side.
+KEYS_DIR = os.environ.get('NOPAYSTATION_KEYS_DIR', 'data/nopaystation')
+# Internal Docker Compose service URL — the download pipeline that later
+# fetches these links runs in a celery-worker container on the same
+# network, not on the host, so `localhost` would not resolve.
+KEYS_BASE_URL = os.environ.get('NOPAYSTATION_KEYS_BASE_URL', 'http://django:8000')
 
-# Directories and base URLs for PS3 RAP files and PSV ZRIF files
-PS3_RAPS_DIR = 'static/content/ps3/raps'
-PS3_RAPS_BASE_URL = f'{MAIN_SITE}/static/content/ps3/raps'
+PS3_RAPS_DIR = os.path.join(KEYS_DIR, 'ps3', 'raps')
+PS3_RAPS_BASE_URL = f'{KEYS_BASE_URL}/api/ingestion/keys/ps3/raps'
 
-PSV_ZRIFS_DIR = 'static/content/psv/zrifs'
-PSV_ZRIFS_BASE_URL = f'{MAIN_SITE}/static/content/psv/zrifs'
+PSV_ZRIFS_DIR = os.path.join(KEYS_DIR, 'psv', 'zrifs')
+PSV_ZRIFS_BASE_URL = f'{KEYS_BASE_URL}/api/ingestion/keys/psv/zrifs'
 
 
 def create_rap_file(rap: str, filepath: str) -> None:

@@ -168,5 +168,13 @@ CATALOG_BUILD_RETENTION = env.int("CATALOG_BUILD_RETENTION", default=2)
 RETROACHIEVEMENTS_API_USER = env.str("RA_API_USER", default="")
 RETROACHIEVEMENTS_API_KEY = env.str("RA_API_KEY", default="")
 
+# The NoPayStation scraper (apps/ingestion/pipeline/sources/nopaystation)
+# generates RAP/ZRIF key files at ingestion time and needs somewhere to
+# write them and a URL those files are actually served from — see
+# apps.ingestion.api.get_ingestion_key. Read directly via os.environ by the
+# (framework-agnostic) pipeline scraper too, so both sides agree without a
+# Django import there; this is just the Django-facing copy.
+NOPAYSTATION_KEYS_DIR = env.str("NOPAYSTATION_KEYS_DIR", default=str(BASE_DIR / "data" / "nopaystation"))
+
 # --- External metadata / debrid provider defaults (per-user keys live in
 # apps.credentials.EncryptedCredential; these are only ingestion-time secrets) --
