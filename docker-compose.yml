@@ -145,10 +145,29 @@ services:
       PGID: 1000
       TZ: UTC
       WEBUI_PORT: 8080
+    # linuxserver/qbittorrent is Alpine-based (musl libc), which has a
+    # well-documented DNS resolution problem specifically under Docker
+    # Desktop's network virtualization — confirmed live: a raw UDP packet
+    # to Docker's own embedded resolver (127.0.0.11:53) got zero response
+    # from this container, while the same test from the Debian-based
+    # django container worked fine. That silently broke every DHT
+    # bootstrap node lookup *and* every HTTP/UDP tracker announce (both
+    # need DNS), so no peer discovery mechanism worked at all — not a
+    # MiNERVA-specific or DHT-specific issue. Bypassing Docker's embedded
+    # resolver with public DNS directly is the standard workaround.
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     volumes:
       - torrent_data:/downloads
     ports:
       - "127.0.0.1:8080:8080"
+      # BitTorrent peer/DHT port — without this published, qBittorrent has
+      # no reachable inbound port and (confirmed live) never bootstraps
+      # into the DHT network at all, so a trackerless magnet (MiNERVA's
+      # links carry no embedded trackers) can never find peers.
+      - "6881:6881/tcp"
+      - "6881:6881/udp"
 
   sveltekit:
     build:

@@ -1,9 +1,16 @@
 """
-Mirror MiNERVA's index.txt.gz + hashes.db into data/minerva/.
+Mirror MiNERVA's hashes.db into data/minerva/.
 
 ETag-cached: a HEAD request decides whether the local copy is fresh; if
 so we skip the download. Supports resume via Range requests so a
 partial 1.7 GB hashes.db can be picked up without restarting.
+
+Used to also mirror assets/index.txt.gz — a flat list of every full_path,
+redundant with the column of the same name already in hashes.db. That URL
+404s now (confirmed live: MiNERVA rebuilt their site around a REST API and
+appears to have dropped the standalone index file); the scraper
+(apps/ingestion/pipeline/sources/minerva/scraper.py) reads the path list
+straight out of hashes.db instead, so there's nothing left to mirror here.
 """
 from __future__ import annotations
 
@@ -21,9 +28,8 @@ _DEFAULT_DEST = Path('data/minerva')
 _USER_AGENT = 'romgi/1.x (workflow.py)'
 _TIMEOUT = 60
 
-# (url, filename) pairs. The build pipeline references both by these names.
+# (url, filename) pairs. The build pipeline references this by name.
 _ARTEFACTS: list[tuple[str, str]] = [
-    ('https://minerva-archive.org/assets/index.txt.gz', 'index.txt.gz'),
     ('https://minerva-archive.org/assets/hashes.db', 'hashes.db'),
 ]
 

@@ -1,19 +1,30 @@
 """
 MiNERVA source plugin.
 
-Reads two upstream artefacts the build pipeline mirrors locally:
+Reads one upstream artefact the build pipeline mirrors locally:
 
-    data/minerva/index.txt   flat list of every path in the archive
-    data/minerva/hashes.db   SQLite per-file metadata (magnet, so_id,
-                             torrents, sha1, ...)
+    data/minerva/hashes.db   SQLite per-file metadata (full_path, magnet,
+                             so_id, torrents, sha1, ...)
 
-For each platform's path prefix(es), join the index with hashes.db and
-emit one entry per ROM file. Each link carries the torrent infohash and
-file index so the TorrentAdapter can do selective-file downloads.
+For each platform's path prefix(es), filter hashes.db by full_path and
+emit one entry per matching ROM file. Each link carries the torrent
+infohash and file index so the TorrentAdapter can do selective-file
+downloads.
+
+MiNERVA used to also publish a separate `assets/index.txt.gz` — a flat
+list of every full_path, used only to filter *before* querying hashes.db
+for metadata. That file 404s now (confirmed live: MiNERVA rebuilt their
+site around a proper REST API, `/v1/api/rom/search` etc., whose response
+shape is literally `{full_path, magnet, so_id}` — the same columns
+hashes.db already has). hashes.db itself is unaffected and still mirrors
+cleanly. Rather than adding an HTTP dependency on their new API (rate
+limits, pagination, a second thing that can drift), this now just reads
+the same full_path list straight out of hashes.db instead of the
+now-missing index file — `_select_paths`'s prefix-filter logic below is
+unchanged from when it filtered index.txt's lines.
 """
 from __future__ import annotations
 
-import gzip
 import os
 import re
 import sqlite3
@@ -26,7 +37,6 @@ from core.contract import BuildContext, PlatformConfig, SourceManifest
 
 HOST_NAME = 'MiNERVA Archive'
 ENV_HASHES_DB = 'MINERVA_HASHES_DB'
-ENV_INDEX_TXT = 'MINERVA_INDEX_TXT'
 DEFAULT_DATA_DIR = 'data/minerva'
 
 _INFOHASH_RE = re.compile(r'urn:btih:([0-9a-fA-F]{40}|[A-Z2-7]{32})', re.IGNORECASE)
@@ -43,18 +53,10 @@ def _resolve_artefact(env_key: str, default_relpath: str) -> Path | None:
     return p if p.is_file() else None
 
 
-def _load_index(index_path: Path) -> list[str]:
-    """Load index.txt(.gz) as a list of paths."""
-    if str(index_path).endswith('.gz'):
-        with gzip.open(index_path, 'rb') as f:
-            data = f.read()
-    else:
-        data = index_path.read_bytes()
-    return [
-        line.decode('utf-8', errors='replace')
-        for line in data.splitlines()
-        if line
-    ]
+def _load_paths(db: sqlite3.Connection) -> list[str]:
+    """Every full_path in hashes.db — same shape _select_paths previously
+    filtered out of the now-gone index.txt.gz."""
+    return [row[0] for row in db.execute('SELECT full_path FROM files')]
 
 
 def _extract_infohash(magnet: str) -> str | None:
@@ -224,25 +226,14 @@ class MinervaSource:
             return False
         if self._index is not None and self._db is not None:
             return True
-        index_path = _resolve_artefact(ENV_INDEX_TXT, f'{DEFAULT_DATA_DIR}/index.txt.gz')
-        if index_path is None:
-            index_path = _resolve_artefact(ENV_INDEX_TXT, f'{DEFAULT_DATA_DIR}/index.txt')
         db_path = _resolve_artefact(ENV_HASHES_DB, f'{DEFAULT_DATA_DIR}/hashes.db')
 
-        if index_path is None or db_path is None:
+        if db_path is None:
             print(
-                f"  [minerva] artefacts missing "
-                f"(index_path={index_path}, db_path={db_path}); "
-                f"skipping. Set {ENV_INDEX_TXT}/{ENV_HASHES_DB} or place "
-                f"files under {DEFAULT_DATA_DIR}/."
+                f"  [minerva] artefact missing (db_path={db_path}); "
+                f"skipping. Set {ENV_HASHES_DB} or place hashes.db under "
+                f"{DEFAULT_DATA_DIR}/."
             )
-            self._artefacts_unusable = True
-            return False
-
-        try:
-            self._index = _load_index(index_path)
-        except Exception as e:
-            print(f"  [minerva] index unreadable ({index_path}): {e}; skipping.")
             self._artefacts_unusable = True
             return False
 
@@ -254,11 +245,12 @@ class MinervaSource:
             db.execute('SELECT name FROM sqlite_master LIMIT 1').fetchone()
             db.execute('SELECT 1 FROM files LIMIT 1').fetchone()
             self._db = db
+            self._index = _load_paths(db)
         except sqlite3.DatabaseError as e:
             print(
                 f"  [minerva] hashes.db at {db_path} is unusable ({e}); "
-                f"skipping. Re-run `python workflow.py` to resume the "
-                f"download (a .part file is preserved on disk)."
+                f"skipping. Re-run download_minerva_artefacts.py to resume "
+                f"(a .part file is preserved on disk)."
             )
             self._artefacts_unusable = True
             return False

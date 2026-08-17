@@ -69,14 +69,28 @@ def add_torrent(task_id: int) -> None:
         return
 
     tag = _tag_for(task.id)
-    client.add(magnet=task.link_torrent_magnet, tag=tag, save_path=_remote_dir(task.id))
+    try:
+        client.add(magnet=task.link_torrent_magnet, tag=tag, save_path=_remote_dir(task.id))
 
-    handle = None
-    for _ in range(20):  # ~10s at 0.5s apiece — qBittorrent needs a moment to register the add
-        handle = client.find_by_tag(tag)
-        if handle is not None:
-            break
-        time.sleep(0.5)
+        handle = None
+        for _ in range(20):  # ~10s at 0.5s apiece — qBittorrent needs a moment to register the add
+            handle = client.find_by_tag(tag)
+            if handle is not None:
+                break
+            time.sleep(0.5)
+    except Exception as exc:
+        # An uncaught error here used to just crash this task and leave
+        # the DownloadTask stuck at status="downloading" forever — no
+        # torrent_hash, no error message, no automatic retry, and no way
+        # for the user to manually retry either (the retry endpoint only
+        # accepts status="failed"). Confirmed live: a qBittorrent
+        # credential mismatch did exactly this. Whatever goes wrong
+        # talking to qBittorrent, the task must still end up in a state
+        # the user can see and act on.
+        logger.exception("add_torrent failed for task %s", task_id)
+        _fail_torrent(task, f"Could not add torrent to qBittorrent: {exc}")
+        return
+
     if handle is None:
         _fail_torrent(task, "qBittorrent did not acknowledge the torrent")
         return

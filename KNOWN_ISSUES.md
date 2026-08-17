@@ -15,15 +15,6 @@ credentials (confirming request shapes and error parsing are correct) —
 but the actual success path was never observed, because no real
 credentials were available.
 
-- **Internet Archive login** (`backend/apps/credentials/services/internet_archive.py`).
-  archive.org was completely unreachable from the dev sandbox (connection
-  refused on every attempt, including via a separate fetch tool). The
-  login form field names (`username`/`password`/`remember`) are based on
-  the long-standing `internetarchive` Python package's conventions, not
-  confirmed against archive.org's live markup. The S3-key-scraping step
-  (`GET`/`POST /account/s3.php`) that runs after login was also never
-  exercised. **Needs a real login attempt with real IA credentials** before
-  you trust it.
 - **Real-Debrid / TorBox** (`backend/apps/downloads/debrid/`). Auth-failure
   and not-configured paths were verified live against both real APIs. The
   full happy path — add a real magnet, poll until cached, unrestrict,
@@ -36,11 +27,15 @@ credentials were available.
 - **A real BitTorrent download to completion.** qBittorrent mechanics
   (selective per-file download, never-seed-after-completion, torrent
   removal) were proven with a deterministic locally-built torrent with no
-  network dependency. Separately, a real magnet add + metadata resolution
-  + file-priority-setting was verified against a real, live, well-seeded
-  torrent. The two were never combined — no full multi-peer download was
-  watched all the way to completion over the real internet. Lower risk
-  than the items above since both halves were proven independently.
+  network dependency. Peer connectivity is now fully proven live too — a
+  well-known control torrent (an official Ubuntu ISO) downloaded with
+  real peers once the DNS bug below was fixed, *and* a real MiNERVA
+  magnet was confirmed working end-to-end afterward (the one MiNERVA
+  torrent that stayed at zero peers this session, `1942`/FBNeo, turned
+  out to just have no current seeders for that specific file — a
+  different MiNERVA entry downloaded correctly). Still not watched all
+  the way to 100% completion, but the download-in-progress path is now
+  solidly verified.
 
 ## Deliberately unimplemented / scoped down
 
@@ -83,14 +78,17 @@ credentials were available.
 
 ## Smoke-tested, not exercised at real scale or duration
 
-- **Catalog ingestion**: MarioCube (3,062 entries — since re-verified after
-  a stale-HTML-regex fix) and NoPayStation (14,268 entries / 28,528 links,
-  `psv` platform) have been run against live data and confirmed `ok` on
-  the Sources page. MiNERVA and Internet Archive scrapers exist (ported
-  from the original app) but have never been run end-to-end here. Run
-  `python manage.py ingest_catalog --sources <id>` for each before relying
-  on them.
-  - NoPayStation's generated RAP/ZRIF key files used to link to
+- **Catalog ingestion**: all four sources have now been run against live
+  data and confirmed `ok` on the Sources page — MarioCube (3,062 entries),
+  NoPayStation (14,268 entries / 28,528 links, `psv`), Internet Archive
+  (303 entries, `gc`), MiNERVA (11,170 entries, `ps1`). Each of the first
+  three had a real, silently-broken bug fixed along the way (a live
+  third-party site/API having drifted from what the scraper assumed —
+  not something introduced during the port), fixed and re-verified before
+  being marked working here:
+  - **MarioCube**: the row-parsing regex no longer matched the site's
+    current table markup — every fetch silently parsed zero entries.
+  - **NoPayStation**: generated RAP/ZRIF key files used to link to
     `raw.githubusercontent.com/caprado/romgi/...` — the *original* app's
     fork, matching its now-abandoned "commit the built catalog back to
     GitHub" model. Every generated link 404ed. Fixed: keys are now written
@@ -98,6 +96,14 @@ credentials were available.
     `apps.ingestion.api.get_ingestion_key` — same "always proxy, never
     expose the raw path" pattern `apps.downloads.api` uses for staged
     downloads.
+  - **MiNERVA**: the separate `assets/index.txt.gz` artefact 404s now —
+    MiNERVA rebuilt their site around a REST API and dropped it. Its only
+    job was filtering paths before querying `hashes.db` (still mirrors
+    fine, unaffected) for metadata, and `hashes.db` already has the same
+    `full_path` column — so the scraper now reads the path list straight
+    out of `hashes.db` instead, no separate index file needed at all.
+  - Internet Archive's *catalog* scraper (`apps/ingestion/pipeline/sources/internet_archive/`)
+    needed no fixes — only the unrelated *login* flow did (see below).
 - **The full Docker Compose stack together.** Every service (all 4
   `celery-worker*` split by queue, `django`, `qbittorrent`, `sveltekit`)
   was individually confirmed to build and serve/respond correctly this
@@ -110,6 +116,74 @@ credentials were available.
   (daily, 04:00 UTC), `internet_archive_revalidate` (daily, 05:00 UTC) —
   all confirmed to *fire* correctly via a short-duration Beat smoke test,
   but none observed running unattended over their real-world interval.
+
+## Fixed since the original build — verified against live data
+
+- **Internet Archive login** (`backend/apps/credentials/services/internet_archive.py`)
+  is now verified end-to-end with a real account: login succeeds, S3 keys
+  are scraped from `s3.php`, and the resulting `EncryptedCredential` row
+  persists with `status: ok`. Two real, unrelated bugs had to be fixed to
+  get there:
+  - `archive.org/account/login` had been rewritten as a client-rendered
+    SPA at some point after this was first ported — a plain
+    `requests.post()` of the old form-POST shape no longer works at all
+    (confirmed live: the page has no `<form>`/`<input>` markup until JS
+    renders it; the real submit target is a JSON endpoint,
+    `POST /services/account/login/`, gated by a CSRF JWT only minted
+    client-side). Login now drives the real page with Playwright instead.
+    `s3.php` itself is still classic server-rendered HTML and was
+    unaffected.
+  - The Playwright browser's default fingerprint (`navigator.webdriver =
+    true`, `"HeadlessChrome"` in the User-Agent) got login attempts
+    silently rejected with the *same generic error* a genuinely wrong
+    password gets — confirmed by re-testing with credentials already
+    verified to work in a real browser. Fixed with a real desktop Chrome
+    UA, `--disable-blink-features=AutomationControlled`, and an init
+    script masking `navigator.webdriver`.
+
+## Fixed while debugging a real stuck download
+
+A user report ("MiNERVA torrent stuck at 0%, downloads page shows nothing
+happening") led to three real, unrelated bugs:
+
+- **qBittorrent's WebUI password drifts from `.env` on every fresh
+  container** — it auto-generates a new random temp password each time
+  (see the README's "first qBittorrent login" step), and if that's never
+  synced to match `QBITTORRENT_PASSWORD`, every download attempt fails
+  auth. qBittorrent's own brute-force protection then bans the caller's
+  IP after 5 failed attempts (`web_ui_max_auth_fail_count`, 1hr ban by
+  default) — and since `apps.torrents.tasks.add_torrent` had no error
+  handling around the qBittorrent client call, that ban crashed the task
+  silently, leaving the `DownloadTask` stuck at `status="downloading"`
+  forever: no error shown, no automatic retry, and no way to manually
+  retry either (the retry endpoint only accepts `status="failed"`). Fixed
+  `add_torrent` to catch any qBittorrent error and fail the task cleanly
+  (and therefore retryably) instead.
+- **Internet Archive login state was never actually checked during
+  download failover.** `apps.downloads.tasks._find_failover_link` called
+  `rank_links(links, settings_obj)` — omitting the third argument,
+  `ia_logged_in`, which silently defaulted to `False`. Every IA-gated link
+  was treated as unusable even for a user with a valid, working IA
+  session (confirmed live: a real logged-in user's torrent failover
+  landed on an IA link and was rejected with "Internet Archive login
+  required" anyway). Fixed to look up the user's real
+  `EncryptedCredential`/`internet_archive.is_logged_in()` state.
+- **`linuxserver/qbittorrent` (Alpine/musl) couldn't resolve any external
+  DNS at all under Docker Desktop for Mac's networking** — confirmed live
+  by a raw UDP packet to Docker's own embedded resolver (127.0.0.11:53)
+  getting zero response from that container specifically, while the same
+  test from the Debian-based `django` container worked fine. This broke
+  *every* peer-discovery mechanism silently (DHT bootstrap node lookups
+  and HTTP/UDP tracker announces both need DNS), not just MiNERVA's
+  trackerless magnets — even a real, heavily-seeded control torrent (an
+  Ubuntu ISO, added directly with its real tracker list) got zero peers
+  until this was fixed. This is a known class of issue (Alpine/musl DNS
+  resolution under Docker Desktop's network virtualization); worked
+  around by pointing the `qbittorrent` service at public DNS directly
+  (`dns: [1.1.1.1, 8.8.8.8]` in `docker-compose.yml`) rather than relying
+  on Docker's embedded resolver. Also published the BitTorrent peer port
+  (6881, TCP+UDP) — was previously not published at all — though the DNS
+  fix turned out to be the actual root cause.
 
 ## Fixed while writing this document — worth a second look
 
@@ -128,6 +202,17 @@ instructions, both now fixed and verified:
 
 ## Also worth knowing
 
+- **Manual per-source ingestion re-runs** (a "Run" button per row on the
+  Sources page) are now supported — `POST /api/ingestion/sources/{id}/run`,
+  `apps.ingestion.tasks.run_single_source`. Since `CatalogBuild` is
+  normally an atomic full-catalog snapshot (every ingestion run is
+  expected to cover every source), a naive single-source run would wipe
+  out every other source's data. `orchestrator.carry_forward_other_sources`
+  avoids that by seeding the new build with every other source's
+  Entry/Link data from the current active build before re-scraping just
+  the requested source — verified live: re-running `mariocube` alone
+  produced a build with byte-identical entry counts across all four
+  sources (226,573 total, unchanged) except mariocube's own fresh scrape.
 - `qbittorrent-api` is pinned to `>=2026.8` — an older pin
   (`<2025.0`, the original guess) can't parse a successful login response
   from qBittorrent 5.x, which is what `linuxserver/qbittorrent:latest`

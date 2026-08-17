@@ -31,6 +31,8 @@ from django.utils import timezone
 
 from apps.accounts.models import UserSettings
 from apps.catalog.models import CatalogBuild, Entry
+from apps.credentials.models import EncryptedCredential
+from apps.credentials.services import internet_archive as ia
 
 from .adapters.registry import registry
 from .extraction import ExtractionError, extract_archive
@@ -129,7 +131,17 @@ def _find_failover_link(task: DownloadTask):
     if entry is None:
         return None
     settings_obj = UserSettings.objects.filter(user_id=task.user_id).first()
-    ranked = rank_links(entry.links.select_related("source", "torrent"), settings_obj)
+    # Bug fix: this used to be called with no third argument, so
+    # ia_logged_in silently defaulted to False on every failover check —
+    # every Internet-Archive-gated link got treated as unusable even for a
+    # user with a valid, working IA session (confirmed live: a real
+    # logged-in user's torrent failover landed on an IA link and was
+    # rejected with "Internet Archive login required" anyway).
+    credential = EncryptedCredential.objects.filter(user_id=task.user_id, provider="internet_archive").first()
+    ia_logged_in = credential is not None and ia.is_logged_in(credential)
+    ranked = rank_links(
+        entry.links.select_related("source", "torrent"), settings_obj, ia_logged_in=ia_logged_in
+    )
     tried = set(task.failed_urls) | {task.link_url}
     for candidate in ranked:
         if candidate.score > AUTH_GATED_SCORE and candidate.link.url not in tried:
