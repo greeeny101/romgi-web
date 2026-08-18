@@ -5,6 +5,7 @@
 	import { catalogApi, type EntryDetail, type Link as CatalogLink, type Platform } from '$lib/api/catalog';
 	import { libraryApi } from '$lib/api/library';
 	import { downloads } from '$lib/stores/downloads';
+	import { browseState } from '$lib/stores/browseState';
 	import { metadataApi, type GameMetadata } from '$lib/api/metadata';
 	import { ApiError } from '$lib/api/client';
 	import ErrorView from '$lib/components/common/ErrorView.svelte';
@@ -74,6 +75,14 @@
 		load();
 	});
 
+	// Browse restores its filters from the query string it last recorded, and
+	// scrolls this entry back into view.
+	let browseHref = $derived($browseState.search ? `/${$browseState.search}` : '/');
+
+	$effect(() => {
+		if (slug) browseState.rememberFocus(slug);
+	});
+
 	let platformName = $derived(platforms.find((p) => p.id === entry?.platform_id)?.name ?? entry?.platform_id);
 	let platformBrand = $derived(platforms.find((p) => p.id === entry?.platform_id)?.brand);
 </script>
@@ -81,6 +90,12 @@
 <svelte:head>
 	<title>{entry?.title ?? 'Loading…'} — romgi</title>
 </svelte:head>
+
+<a
+	href={browseHref}
+	class="mb-4 inline-block text-sm text-primary-600 hover:underline dark:text-primary-400"
+	>&larr; Back to Browse</a
+>
 
 {#if loading}
 	<div class="flex justify-center py-16"><Spinner size="8" /></div>

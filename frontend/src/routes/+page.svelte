@@ -1,8 +1,12 @@
 <script lang="ts">
+	import { tick } from 'svelte';
+	import { page as appPage } from '$app/state';
+	import { replaceState } from '$app/navigation';
 	import { Search, Spinner, Button } from 'flowbite-svelte';
 	import { GridOutline, ListOutline } from 'flowbite-svelte-icons';
 	import { catalogApi, type Platform, type Region, type Source, type PaginatedEntries } from '$lib/api/catalog';
 	import { ApiError } from '$lib/api/client';
+	import { browseState } from '$lib/stores/browseState';
 	import RomGridCard from '$lib/components/rom/RomGridCard.svelte';
 	import RomListTile from '$lib/components/rom/RomListTile.svelte';
 	import FilterPanel from '$lib/components/filters/FilterPanel.svelte';
@@ -15,16 +19,34 @@
 	let sources = $state<Source[]>([]);
 	let lookupsError = $state<string | null>(null);
 
-	let query = $state('');
-	let platformFilter = $state('');
-	let regionFilter = $state('');
-	let sourceFilter = $state('');
-	let page = $state(1);
-	let viewMode = $state<'grid' | 'list'>('grid');
+	// Filters live in the URL so that leaving for an entry and coming back —
+	// via the back button, the entry page's back link, or a reload — restores
+	// exactly what the user was looking at.
+	const initialParams = appPage.url.searchParams;
+	const initialFilters = {
+		query: initialParams.get('q') ?? '',
+		platformFilter: initialParams.get('platform') ?? '',
+		regionFilter: initialParams.get('region') ?? '',
+		sourceFilter: initialParams.get('source') ?? ''
+	};
+
+	let query = $state(initialFilters.query);
+	let platformFilter = $state(initialFilters.platformFilter);
+	let regionFilter = $state(initialFilters.regionFilter);
+	let sourceFilter = $state(initialFilters.sourceFilter);
+	let page = $state(Math.max(1, Number.parseInt(initialParams.get('page') ?? '1', 10) || 1));
+	let viewMode = $state<'grid' | 'list'>(initialParams.get('view') === 'list' ? 'list' : 'grid');
+
+	// The entry the user opened last, to be scrolled back into view once the
+	// first result set lands. Read at init so it is claimed before any effect.
+	let pendingFocusSlug: string | null = browseState.takeFocus();
+	let highlightedSlug = $state<string | null>(null);
 
 	let result = $state<PaginatedEntries | null>(null);
 	let loading = $state(false);
 	let error = $state<string | null>(null);
+
+	let hasFilters = $derived(Boolean(query || platformFilter || regionFilter || sourceFilter));
 
 	const PAGE_SIZE = 40;
 
@@ -58,6 +80,32 @@
 		} finally {
 			loading = false;
 		}
+		await restoreFocus();
+	}
+
+	// Bring the entry the user came back from into view, once, after its card
+	// has actually rendered.
+	async function restoreFocus() {
+		if (!pendingFocusSlug) return;
+		const slug = pendingFocusSlug;
+		pendingFocusSlug = null;
+		await tick();
+		const card = document.getElementById(`entry-${slug}`);
+		if (!card) return;
+		// Instant, not smooth — smooth scrolling fights SvelteKit's own scroll
+		// restoration when arriving via the back button.
+		card.scrollIntoView({ block: 'center' });
+		highlightedSlug = slug;
+		setTimeout(() => {
+			if (highlightedSlug === slug) highlightedSlug = null;
+		}, 2000);
+	}
+
+	function clearFilters() {
+		query = '';
+		platformFilter = '';
+		regionFilter = '';
+		sourceFilter = '';
 	}
 
 	function platformName(id: string): string {
@@ -68,12 +116,40 @@
 	}
 
 	// Reset to page 1 whenever a filter changes; re-fetch on any relevant change.
+	// The comparison matters: a bare read-and-reset would also fire on the first
+	// run and stomp a page number restored from the URL.
+	let lastFilters = { ...initialFilters };
+
 	$effect(() => {
-		void query;
-		void platformFilter;
-		void regionFilter;
-		void sourceFilter;
+		const now = { query, platformFilter, regionFilter, sourceFilter };
+		if (
+			now.query === lastFilters.query &&
+			now.platformFilter === lastFilters.platformFilter &&
+			now.regionFilter === lastFilters.regionFilter &&
+			now.sourceFilter === lastFilters.sourceFilter
+		) {
+			return;
+		}
+		lastFilters = now;
 		page = 1;
+	});
+
+	// Mirror the current view into the URL, and remember it for the entry page's
+	// "Back to Browse" link. replaceState, not goto — typing in the search box
+	// must not pile up history entries.
+	$effect(() => {
+		const params = new URLSearchParams();
+		if (query) params.set('q', query);
+		if (platformFilter) params.set('platform', platformFilter);
+		if (regionFilter) params.set('region', regionFilter);
+		if (sourceFilter) params.set('source', sourceFilter);
+		if (page > 1) params.set('page', String(page));
+		if (viewMode !== 'grid') params.set('view', viewMode);
+
+		const qs = params.toString();
+		const search = qs ? `?${qs}` : '';
+		if (search !== appPage.url.search) replaceState(`/${search}`, {});
+		browseState.rememberSearch(search);
 	});
 
 	$effect(() => {
@@ -104,6 +180,9 @@
 			<Search placeholder="Search the catalog…" bind:value={query} clearable />
 		</div>
 		<div class="flex gap-1">
+			{#if hasFilters}
+				<Button size="sm" color="alternative" onclick={clearFilters}>Clear filters</Button>
+			{/if}
 			<Button
 				size="sm"
 				color={viewMode === 'grid' ? 'primary' : 'alternative'}
@@ -149,6 +228,8 @@
 						platformName={platformName(entry.platform_id)}
 						platformBrand={platformBrand(entry.platform_id)}
 						href={`/entry/${entry.slug}`}
+						id={`entry-${entry.slug}`}
+						highlighted={highlightedSlug === entry.slug}
 					/>
 				{/each}
 			</div>
@@ -160,6 +241,8 @@
 						platformName={platformName(entry.platform_id)}
 						platformBrand={platformBrand(entry.platform_id)}
 						href={`/entry/${entry.slug}`}
+						id={`entry-${entry.slug}`}
+						highlighted={highlightedSlug === entry.slug}
 					/>
 				{/each}
 			</div>
