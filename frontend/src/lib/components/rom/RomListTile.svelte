@@ -2,6 +2,7 @@
 	import { ImageOutline } from 'flowbite-svelte-icons';
 	import type { EntrySummary } from '$lib/api/catalog';
 	import PlatformBadge from '$lib/components/platform/PlatformBadge.svelte';
+	import RegionFlags from '$lib/components/region/RegionFlags.svelte';
 	import FavoriteButton from '$lib/components/favorites/FavoriteButton.svelte';
 	import DownloadedBadge from '$lib/components/downloads/DownloadedBadge.svelte';
 
@@ -48,8 +49,9 @@
 		<p class="truncate text-sm font-medium text-gray-900 dark:text-white" title={entry.title}>
 			{entry.title}
 		</p>
-		<div class="mt-1 flex items-center gap-2">
+		<div class="mt-1 flex items-center gap-2 overflow-hidden">
 			<PlatformBadge name={platformName} brand={platformBrand} />
+			<RegionFlags regions={entry.regions} />
 			{#if entry.ra_game_id}
 				<span
 					class="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-900 dark:text-amber-200"

@@ -6,6 +6,7 @@ class FavoriteOut(Schema):
     title: str
     platform_id: str
     boxart_url: str | None
+    regions: list[str]
     created_at: str
 
 
@@ -14,4 +15,5 @@ class RecentlyViewedOut(Schema):
     title: str
     platform_id: str
     boxart_url: str | None
+    regions: list[str]
     viewed_at: str

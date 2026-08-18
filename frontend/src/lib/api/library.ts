@@ -5,6 +5,7 @@ export interface FavoriteEntry {
 	title: string;
 	platform_id: string;
 	boxart_url: string | null;
+	regions: string[];
 	created_at: string;
 }
 
@@ -13,6 +14,7 @@ export interface RecentlyViewedEntry {
 	title: string;
 	platform_id: string;
 	boxart_url: string | null;
+	regions: string[];
 	viewed_at: string;
 }
 

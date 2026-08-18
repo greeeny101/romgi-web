@@ -136,7 +136,8 @@
 							title: item.title,
 							platform_id: item.platform_id,
 							boxart_url: item.boxart_url,
-							ra_game_id: null
+							ra_game_id: null,
+							regions: item.regions
 						}}
 						platformName={platformName(item.platform_id)}
 						platformBrand={platformBrand(item.platform_id)}
@@ -157,7 +158,8 @@
 							title: item.title,
 							platform_id: item.platform_id,
 							boxart_url: item.boxart_url,
-							ra_game_id: null
+							ra_game_id: null,
+							regions: item.regions
 						}}
 						platformName={platformName(item.platform_id)}
 						platformBrand={platformBrand(item.platform_id)}
