@@ -2,6 +2,7 @@
 	import { GridPlusSolid } from 'flowbite-svelte-icons';
 	import type { EntrySummary } from '$lib/api/catalog';
 	import PlatformBadge from '$lib/components/platform/PlatformBadge.svelte';
+	import RegionFlags from '$lib/components/region/RegionFlags.svelte';
 	import FavoriteButton from '$lib/components/favorites/FavoriteButton.svelte';
 	import DownloadedBadge from '$lib/components/downloads/DownloadedBadge.svelte';
 
@@ -53,7 +54,13 @@
 			{entry.title}
 		</p>
 		<div class="mt-auto flex items-center justify-between gap-2">
-			<PlatformBadge name={platformName} brand={platformBrand} />
+			<!-- Clipped here rather than at the card edge: platform names run long
+			     ("Super Nintendo Entertainment System") and the badge is whitespace-nowrap,
+			     so without this the overflow pushes the RA pill off the card. -->
+			<div class="flex min-w-0 items-center gap-1.5 overflow-hidden">
+				<PlatformBadge name={platformName} brand={platformBrand} />
+				<RegionFlags regions={entry.regions} />
+			</div>
 			{#if entry.ra_game_id}
 				<span
 					class="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-900 dark:text-amber-200"

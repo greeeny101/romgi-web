@@ -74,7 +74,7 @@ def list_entries(
     page: int = Query(1, ge=1),
     page_size: int = Query(40, ge=1, le=100),
 ):
-    qs = _active_entries().select_related("platform")
+    qs = _active_entries().select_related("platform").prefetch_related("regions")
 
     if q:
         query = SearchQuery(q, search_type="websearch")
@@ -101,6 +101,8 @@ def list_entries(
                 platform_id=e.platform_id,
                 boxart_url=e.boxart_url,
                 ra_game_id=e.ra_game_id,
+                # .all() so this reads the prefetch cache rather than one query per row
+                regions=[r.id for r in e.regions.all()],
             )
             for e in items
         ],

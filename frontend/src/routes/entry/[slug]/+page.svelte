@@ -10,6 +10,7 @@
 	import { ApiError } from '$lib/api/client';
 	import ErrorView from '$lib/components/common/ErrorView.svelte';
 	import PlatformBadge from '$lib/components/platform/PlatformBadge.svelte';
+	import RegionFlags from '$lib/components/region/RegionFlags.svelte';
 	import FavoriteButton from '$lib/components/favorites/FavoriteButton.svelte';
 	import MetadataCard from '$lib/components/metadata/MetadataCard.svelte';
 	import DownloadQueueRow from '$lib/components/downloads/DownloadQueueRow.svelte';
@@ -119,7 +120,10 @@
 					<PlatformBadge name={platformName} brand={platformBrand} />
 				{/if}
 				{#each entry.regions as region (region)}
-					<Badge color="gray">{region.toUpperCase()}</Badge>
+					<Badge color="gray" class="items-center gap-1">
+						<RegionFlags regions={[region]} size="h-3.5 w-3.5" />
+						{region.toUpperCase()}
+					</Badge>
 				{/each}
 				{#if entry.ra_game_id}
 					<Badge color="yellow">

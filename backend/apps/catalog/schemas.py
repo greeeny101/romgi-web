@@ -36,6 +36,7 @@ class EntrySummaryOut(Schema):
     platform_id: str
     boxart_url: str | None
     ra_game_id: int | None
+    regions: list[str]
 
 
 class EntryDetailOut(Schema):

@@ -35,6 +35,7 @@ export interface EntrySummary {
 	platform_id: string;
 	boxart_url: string | null;
 	ra_game_id: number | null;
+	regions: string[];
 }
 
 export interface EntryDetail {
