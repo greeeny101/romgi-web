@@ -84,6 +84,7 @@ def _out(task: DownloadTask, sources_by_id: dict[str, str] | None = None) -> Dow
         link_is_torrent=task.link_is_torrent,
         source_id=task.link_source_id or None,
         source_name=source_name or task.link_source_id or None,
+        region_ids=task.region_ids or [],
         error=task.error,
         group_key=task.group_key,
         group_title=task.group_title,
@@ -107,6 +108,7 @@ def _enqueue_one(user, entry: Entry, link: Link, group: EntryGroup | None = None
         link_host=link.host,
         link_size=link.size,
         link_source_id=link.source_id,
+        region_ids=list(entry.regions.values_list("id", flat=True)),
         link_requires_auth=link.requires_auth,
         link_is_torrent=link.torrent_id is not None,
         link_torrent_magnet=(link.torrent.magnet or "") if link.torrent_id else "",
@@ -131,7 +133,9 @@ def enqueue(request, payload: EnqueueIn):
         group = get_object_or_404(EntryGroup, id=payload.group_id, build=build)
         members = [
             (member, member.entry.links.order_by("-source__priority").first())
-            for member in group.members.select_related("entry").order_by("member_index")
+            for member in group.members.select_related("entry")
+            .prefetch_related("entry__regions")
+            .order_by("member_index")
         ]
         if not any(link for _, link in members):
             raise HttpError(404, "No downloadable links found for this group.")

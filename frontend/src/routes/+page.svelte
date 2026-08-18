@@ -2,14 +2,14 @@
 	import { tick } from 'svelte';
 	import { page as appPage } from '$app/state';
 	import { replaceState } from '$app/navigation';
-	import { Search, Spinner, Button } from 'flowbite-svelte';
+	import { Spinner, Button } from 'flowbite-svelte';
 	import { GridOutline, ListOutline } from 'flowbite-svelte-icons';
 	import { catalogApi, type Platform, type Region, type Source, type PaginatedEntries } from '$lib/api/catalog';
 	import { ApiError } from '$lib/api/client';
 	import { browseState } from '$lib/stores/browseState';
 	import RomGridCard from '$lib/components/rom/RomGridCard.svelte';
 	import RomListTile from '$lib/components/rom/RomListTile.svelte';
-	import FilterPanel from '$lib/components/filters/FilterPanel.svelte';
+	import FilterBar from '$lib/components/filters/FilterBar.svelte';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ErrorView from '$lib/components/common/ErrorView.svelte';
 	import Pagination from '$lib/components/common/Pagination.svelte';
@@ -45,8 +45,6 @@
 	let result = $state<PaginatedEntries | null>(null);
 	let loading = $state(false);
 	let error = $state<string | null>(null);
-
-	let hasFilters = $derived(Boolean(query || platformFilter || regionFilter || sourceFilter));
 
 	const PAGE_SIZE = 40;
 
@@ -99,13 +97,6 @@
 		setTimeout(() => {
 			if (highlightedSlug === slug) highlightedSlug = null;
 		}, 2000);
-	}
-
-	function clearFilters() {
-		query = '';
-		platformFilter = '';
-		regionFilter = '';
-		sourceFilter = '';
 	}
 
 	function platformName(id: string): string {
@@ -175,14 +166,17 @@
 		<ErrorView message={lookupsError} onRetry={loadLookups} />
 	{/if}
 
-	<div class="flex flex-col gap-3 sm:flex-row sm:items-center">
-		<div class="flex-1">
-			<Search placeholder="Search the catalog…" bind:value={query} clearable />
-		</div>
-		<div class="flex gap-1">
-			{#if hasFilters}
-				<Button size="sm" color="alternative" onclick={clearFilters}>Clear filters</Button>
-			{/if}
+	<FilterBar
+		placeholder="Search the catalog…"
+		bind:query
+		{platforms}
+		{regions}
+		{sources}
+		bind:platform={platformFilter}
+		bind:region={regionFilter}
+		bind:source={sourceFilter}
+	>
+		{#snippet actions()}
 			<Button
 				size="sm"
 				color={viewMode === 'grid' ? 'primary' : 'alternative'}
@@ -199,17 +193,8 @@
 			>
 				<ListOutline class="h-4 w-4" />
 			</Button>
-		</div>
-	</div>
-
-	<FilterPanel
-		{platforms}
-		{regions}
-		{sources}
-		bind:platform={platformFilter}
-		bind:region={regionFilter}
-		bind:source={sourceFilter}
-	/>
+		{/snippet}
+	</FilterBar>
 
 	{#if loading && !result}
 		<div class="flex justify-center py-16"><Spinner size="8" /></div>

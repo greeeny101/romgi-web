@@ -37,6 +37,10 @@ class DownloadTask(models.Model):
     link_host = models.CharField(max_length=255, blank=True)
     link_size = models.BigIntegerField(default=0)
     link_source_id = models.CharField(max_length=32, null=True, blank=True)
+    # Snapshot of Entry.regions at enqueue — same GC-survival reason as the
+    # rest of this block. Ids only ('eu', 'us', ...); the names come from the
+    # (tiny, stable) Region table, which the client already fetches.
+    region_ids = models.JSONField(default=list, blank=True)
     link_requires_auth = models.BooleanField(default=False)
     link_is_torrent = models.BooleanField(default=False)
     # Only populated when link_is_torrent — Phase 4 scope is magnet-only
