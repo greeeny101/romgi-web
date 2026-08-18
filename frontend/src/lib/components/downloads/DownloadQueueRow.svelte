@@ -10,6 +10,7 @@
 	import { downloadsApi, type DownloadTask } from '$lib/api/downloads';
 	import { downloads } from '$lib/stores/downloads';
 	import PlatformBadge from '$lib/components/platform/PlatformBadge.svelte';
+	import RegionFlags from '$lib/components/region/RegionFlags.svelte';
 	import { statusColor } from './statusColor';
 
 	let { task }: { task: DownloadTask } = $props();
@@ -55,6 +56,7 @@
 			<p class="truncate font-medium text-gray-900 dark:text-white">{task.title}</p>
 			<div class="mt-1 -ml-2.5 flex flex-wrap items-center gap-1.5">
 				<PlatformBadge name={task.platform_name} />
+				<RegionFlags regions={task.region_ids} />
 				<Badge color="indigo" class="whitespace-nowrap">
 					{task.source_name ?? task.link_host}{#if task.link_is_torrent} &nbsp;· torrent{/if}
 				</Badge>
