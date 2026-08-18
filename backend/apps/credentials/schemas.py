@@ -6,6 +6,11 @@ class InternetArchiveLoginIn(Schema):
     password: str
 
 
+class InternetArchiveKeysIn(Schema):
+    access_key: str
+    secret_key: str
+
+
 class LoginTaskOut(Schema):
     task_id: str
 

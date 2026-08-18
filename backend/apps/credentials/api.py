@@ -20,6 +20,7 @@ from .models import EncryptedCredential
 from .schemas import (
     CredentialIn,
     CredentialStatusOut,
+    InternetArchiveKeysIn,
     InternetArchiveLoginIn,
     InternetArchiveStatusOut,
     LoginStatusOut,
@@ -48,6 +49,50 @@ def ia_login_status(request, task_id: str):
     if result.successful():
         return LoginStatusOut(state="success")
     return LoginStatusOut(state="error", message=str(result.result))
+
+
+@router.put("/internet-archive/keys", response=InternetArchiveStatusOut)
+def ia_set_keys(request, payload: InternetArchiveKeysIn):
+    """The manual alternative to the username/password flow: the user
+    signs in to archive.org in their own browser and pastes the keypair
+    from /account/s3.php. Unlike the login flow this needs no headless
+    browser, so it verifies the keys inline and answers directly instead
+    of going through Celery."""
+    try:
+        data = internet_archive.login_with_keys(payload.access_key, payload.secret_key)
+    except internet_archive.InternetArchiveLoginError as exc:
+        # 400, not 500: every failure here is either keys the user can
+        # correct or archive.org being unreachable.
+        raise HttpError(400, str(exc)) from exc
+
+    # Carry over a cookie session already on file for the same account.
+    # apply_headers prefers cookies for archive.org/download/ URLs, and
+    # pasting keys is meant to *add* a durable credential, not throw away
+    # a working session. Keys for a different account get a clean slate —
+    # those cookies belong to someone else.
+    existing = EncryptedCredential.objects.filter(user=request.user, provider="internet_archive").first()
+    if existing:
+        previous = existing.data or {}
+        same_account = internet_archive.normalize_username(previous.get("username", "")) == data["username"]
+        if previous.get("cookies") and same_account:
+            data["cookies"] = previous["cookies"]
+
+    credential, _ = EncryptedCredential.objects.update_or_create(
+        user=request.user,
+        provider="internet_archive",
+        defaults={
+            "data": data,
+            "status": "ok",
+            "failure_count": 0,
+            "last_validated_at": timezone.now(),
+        },
+    )
+    return InternetArchiveStatusOut(
+        logged_in=True,
+        username=data["username"],
+        status=credential.status,
+        last_validated_at=credential.last_validated_at.isoformat(),
+    )
 
 
 @router.get("/internet-archive/status", response=InternetArchiveStatusOut)
