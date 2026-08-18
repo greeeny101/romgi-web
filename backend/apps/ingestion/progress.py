@@ -22,6 +22,39 @@ def _serialize(health) -> dict:
     }
 
 
+def build_state() -> dict:
+    """Whether any build currently holds the one-at-a-time ingestion slot.
+
+    Derived from the DB rather than passed in by the caller, so a start and
+    a finish event can't disagree about the truth — every call site just
+    says "this may have changed" and the query decides.
+    """
+    from apps.catalog.models import CatalogBuild
+
+    build = CatalogBuild.objects.filter(status="running").order_by("-started_at").first()
+    return {
+        "running": build is not None,
+        "build_id": build.pk if build else None,
+        "started_at": build.started_at.isoformat() if build else None,
+    }
+
+
+def push_build_status() -> None:
+    """Tell every connected client whether the ingestion slot is taken, so
+    the Sources page can disable Run everywhere instead of letting the user
+    click into a 409."""
+    layer = get_channel_layer()
+    if layer is None:
+        return
+    try:
+        async_to_sync(layer.group_send)(
+            GROUP_NAME,
+            {"type": "ingestion.event", "event": "build.status", "data": build_state()},
+        )
+    except Exception:  # noqa: BLE001 - same as below: never fail a run over a progress tick
+        pass
+
+
 def push_source_health(health) -> None:
     layer = get_channel_layer()
     if layer is None:

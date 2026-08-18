@@ -2,6 +2,7 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { Button, Spinner, Table, TableBody, TableBodyCell, TableBodyRow, TableHead, TableHeadCell } from 'flowbite-svelte';
 	import { catalogApi, type Source, type SourceHealth } from '$lib/api/catalog';
+	import { ingestionApi } from '$lib/api/ingestion';
 	import { ApiError } from '$lib/api/client';
 	import ErrorView from '$lib/components/common/ErrorView.svelte';
 	import SourceHealthBadge from '$lib/components/sources/SourceHealthBadge.svelte';
@@ -14,14 +15,23 @@
 	let unsubscribeWs: (() => void) | null = null;
 	let triggering = $state<Set<string>>(new Set());
 	let runErrors = $state<Map<string, string>>(new Map());
+	// Ingestion takes a single global slot (apps.ingestion.api.run_source
+	// rejects a second build with 409), so this gates every Run button, not
+	// just the one whose source is mid-scrape.
+	let buildRunning = $state(false);
 
 	async function load() {
 		loading = true;
 		error = null;
 		try {
-			const [sourcesResult, healthResult] = await Promise.all([catalogApi.sources(), catalogApi.sourceHealth()]);
+			const [sourcesResult, healthResult, status] = await Promise.all([
+				catalogApi.sources(),
+				catalogApi.sourceHealth(),
+				ingestionApi.status()
+			]);
 			sources = sourcesResult;
 			health = new Map(healthResult.map((h) => [h.source_id, h]));
+			buildRunning = status.running;
 		} catch (err) {
 			error = err instanceof ApiError ? err.message : 'Failed to load sources.';
 		} finally {
@@ -39,6 +49,8 @@
 			if (type === 'source.health') {
 				const h = data as SourceHealth;
 				health = new Map(health).set(h.source_id, h);
+			} else if (type === 'build.status') {
+				buildRunning = (data as { running: boolean }).running;
 			}
 		});
 	});
@@ -53,20 +65,31 @@
 		return new Date(iso).toLocaleString();
 	}
 
+	/** This particular source is the one being scraped. */
 	function isRunning(sourceId: string): boolean {
 		return triggering.has(sourceId) || health.get(sourceId)?.status === 'running';
 	}
+
+	/** Any run at all is in flight, including one started from another tab. */
+	const anyRunning = $derived(buildRunning || triggering.size > 0);
+
+	/** The source currently being scraped, if we can tell which it is. */
+	const runningSource = $derived(sources.find((s) => isRunning(s.id))?.name ?? null);
 
 	async function runSource(sourceId: string) {
 		triggering = new Set(triggering).add(sourceId);
 		runErrors = new Map(runErrors);
 		runErrors.delete(sourceId);
+		buildRunning = true;
 		try {
 			await catalogApi.runSource(sourceId);
 			// Status flips to 'running' via the WS source.health event once
 			// the Celery task actually starts — triggering just covers the
 			// gap between clicking and that first event arriving.
 		} catch (err) {
+			// The optimistic lock above has to come back off, or a rejected
+			// start would leave every button disabled until a reload.
+			buildRunning = (await ingestionApi.status().catch(() => ({ running: false }))).running;
 			runErrors = new Map(runErrors).set(
 				sourceId,
 				err instanceof ApiError ? err.message : 'Failed to start run.'
@@ -85,6 +108,18 @@
 
 <div class="flex flex-col gap-4">
 	<h1 class="text-xl font-semibold text-gray-900 dark:text-white">Sources</h1>
+
+	{#if anyRunning}
+		<div
+			class="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-200"
+		>
+			<Spinner size="4" />
+			<span>
+				{runningSource ? `Running ${runningSource}` : 'An ingestion run is in progress'} — only one
+				source can be checked at a time, so the other sources cannot be run at this time.
+			</span>
+		</div>
+	{/if}
 
 	{#if loading}
 		<div class="flex justify-center py-16"><Spinner size="8" /></div>
@@ -123,7 +158,15 @@
 								{h?.notes ?? ''}
 							</TableBodyCell>
 							<TableBodyCell>
-								<Button size="xs" color="alternative" disabled={isRunning(source.id)} onclick={() => runSource(source.id)}>
+								<Button
+									size="xs"
+									color="alternative"
+									disabled={anyRunning}
+									title={anyRunning && !isRunning(source.id)
+										? 'Another ingestion run is in progress — only one can run at a time.'
+										: ''}
+									onclick={() => runSource(source.id)}
+								>
 									{isRunning(source.id) ? 'Running…' : 'Run'}
 								</Button>
 								{#if runErrors.get(source.id)}

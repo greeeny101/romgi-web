@@ -26,6 +26,7 @@ from ninja_jwt.authentication import JWTAuth
 
 from apps.catalog.models import CatalogBuild, Source
 
+from . import orchestrator, progress
 from .tasks import run_single_source
 
 router = Router(tags=["ingestion"])
@@ -63,10 +64,29 @@ class RunSourceOut(Schema):
     task_id: str
 
 
+class IngestionStatusOut(Schema):
+    running: bool
+    build_id: int | None = None
+    started_at: str | None = None
+
+
+@router.get("/status", response=IngestionStatusOut, auth=JWTAuth())
+def ingestion_status(request):
+    """Whether the one-at-a-time ingestion slot is taken, so the Sources
+    page can disable every Run button instead of letting the user click
+    into a 409. Reaps first for the same reason run_source does: a build
+    stranded by a dead worker would otherwise show as running forever."""
+    orchestrator.reap_stale_builds(django_settings.CATALOG_BUILD_STALE_AFTER_HOURS)
+    return IngestionStatusOut(**progress.build_state())
+
+
 @router.post("/sources/{source_id}/run", response={202: RunSourceOut}, auth=JWTAuth())
 def run_source(request, source_id: str):
     if not Source.objects.filter(id=source_id).exists():
         raise Http404("Unknown source.")
+    # Clear anything abandoned by a dead worker first, or a single crashed
+    # run blocks every manual run from here on.
+    orchestrator.reap_stale_builds(django_settings.CATALOG_BUILD_STALE_AFTER_HOURS)
     if CatalogBuild.objects.filter(status="running").exists():
         raise HttpError(409, "An ingestion build is already running — try again once it finishes.")
 

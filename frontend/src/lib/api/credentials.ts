@@ -16,10 +16,23 @@ export interface LoginStatus {
 	message?: string | null;
 }
 
+export interface CredentialField {
+	key: string;
+	label: string;
+	obscure: boolean;
+	optional: boolean;
+}
+
 export interface CredentialStatus {
 	provider: string;
 	configured: boolean;
 	status: 'unverified' | 'ok' | 'stale' | 'invalid';
+	/** The provider's credential shape, as the backend defines it. */
+	fields: CredentialField[];
+	/** Keys currently held in the vault — obscure ones included, by name only. */
+	stored_keys: string[];
+	/** Saved values for the non-secret fields, so the form can show them back. */
+	stored_values: Record<string, string>;
 }
 
 export interface TestResult {

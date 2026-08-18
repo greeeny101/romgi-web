@@ -13,7 +13,7 @@ from django.conf import settings
 
 from apps.catalog.models import CatalogBuild
 
-from . import orchestrator
+from . import orchestrator, progress
 from .writer import CatalogWriter
 
 
@@ -23,6 +23,7 @@ def run_full_ingestion(source_filter: list[str] | None = None, use_cached: bool 
     `scrape_source_platform` task per (platform, source) pair from
     platforms.yml, with `_after_ingestion` as the chord callback."""
     build = CatalogBuild.objects.create(status="running")
+    progress.push_build_status()
 
     registry = orchestrator.load_registry_for_pipeline()
     writer = CatalogWriter(build)
@@ -90,6 +91,7 @@ def _after_ingestion(results: list[dict], build_id: int) -> None:
             )
 
     finalize_catalog_build.run(build_id)
+    progress.push_build_status()
 
 
 @shared_task
@@ -107,6 +109,9 @@ def finalize_catalog_build(build_id: int) -> None:
 
 @shared_task
 def gc_old_builds() -> int:
+    # Reap first: a stranded "running" build is never retired, so gc alone
+    # would leave it blocking manual runs indefinitely.
+    orchestrator.reap_stale_builds(settings.CATALOG_BUILD_STALE_AFTER_HOURS)
     return orchestrator.gc_old_builds(keep=settings.CATALOG_BUILD_RETENTION)
 
 
@@ -117,11 +122,19 @@ def run_single_source(source_id: str) -> int:
     this must not wipe out every other source's catalog data — see
     orchestrator.carry_forward_other_sources."""
     build = CatalogBuild.objects.create(status="running")
+    progress.push_build_status()
     try:
         orchestrator.run_single_source_sync(build, source_id)
+        # Inside the try so a crash *here* also marks the build failed —
+        # otherwise it strands at "running" and blocks every later run until
+        # the stale-build reaper catches up.
+        orchestrator.finalize_build(build)
     except Exception:
         build.status = "failed"
         build.save(update_fields=["status"])
         raise
-    orchestrator.finalize_build(build)
+    finally:
+        # The slot is free whether the run succeeded or blew up; a failed run
+        # that leaves every Run button disabled is the bug being fixed here.
+        progress.push_build_status()
     return build.pk
