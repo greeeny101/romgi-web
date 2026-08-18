@@ -30,10 +30,16 @@ def _serialize(task) -> dict:
         "link_is_torrent": task.link_is_torrent,
         "source_id": task.link_source_id or None,
         "source_name": _source_name(task.link_source_id),
+        "region_ids": task.region_ids or [],
         "error": task.error,
         "group_key": task.group_key,
         "group_title": task.group_title,
         "group_index": task.group_index,
+        # The client upserts this payload over the whole task object, so every
+        # field DownloadTaskOut declares has to be here — anything omitted
+        # comes back undefined and silently drops out of a filtered view.
+        "playlist_file": task.playlist_file,
+        "retry_count": task.retry_count,
         "created_at": task.created_at.isoformat(),
         "completed_at": task.completed_at.isoformat() if task.completed_at else None,
     }

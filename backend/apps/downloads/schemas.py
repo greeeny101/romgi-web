@@ -23,6 +23,7 @@ class DownloadTaskOut(Schema):
     link_is_torrent: bool
     source_id: str | None
     source_name: str | None
+    region_ids: list[str]
     error: str
     group_key: str
     group_title: str

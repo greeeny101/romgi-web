@@ -7,6 +7,7 @@
 	import { favorites } from '$lib/stores/favorites';
 	import { ApiError } from '$lib/api/client';
 	import RomGridCard from '$lib/components/rom/RomGridCard.svelte';
+	import RegionFlags from '$lib/components/region/RegionFlags.svelte';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ErrorView from '$lib/components/common/ErrorView.svelte';
 
@@ -176,9 +177,13 @@
 				<div class="flex items-center justify-between gap-3 rounded-lg border border-gray-200 p-3 text-sm dark:border-gray-700">
 					<div class="min-w-0">
 						<p class="truncate font-medium text-gray-900 dark:text-white">{task.title}</p>
-						<p class="text-xs text-gray-500 dark:text-gray-400">
-							{platformName(task.platform_id)} · completed {new Date(task.completed_at ?? task.created_at).toLocaleDateString()}
-						</p>
+						<div class="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+							<span class="shrink-0">{platformName(task.platform_id)}</span>
+							<RegionFlags regions={task.region_ids} size="h-3.5 w-3.5" />
+							<span class="truncate">
+								· completed {new Date(task.completed_at ?? task.created_at).toLocaleDateString()}
+							</span>
+						</div>
 					</div>
 					<div class="flex shrink-0 items-center gap-3">
 						<button

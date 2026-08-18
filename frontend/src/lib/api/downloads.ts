@@ -18,6 +18,9 @@ export interface DownloadTask {
 	link_is_torrent: boolean;
 	source_id: string | null;
 	source_name: string | null;
+	// Snapshotted from the entry at enqueue — ids only, resolved to names
+	// against catalogApi.regions().
+	region_ids: string[];
 	error: string;
 	group_key: string;
 	group_title: string;
