@@ -27,6 +27,7 @@ import time
 import requests
 from celery import shared_task
 from django.conf import settings as django_settings
+from django.db import transaction
 from django.utils import timezone
 
 from apps.accounts.models import UserSettings
@@ -81,7 +82,11 @@ def dispatch_next_for_user(user_id) -> None:
     if max_conc:
         pending_qs = pending_qs[: max_conc - active]
     for task in pending_qs:
-        start_download.delay(task.id)
+        # on_commit rather than a bare delay(): downloads.api.enqueue runs
+        # inside a transaction, and a worker that picked the id up before
+        # the commit would find no row. Outside a transaction this fires
+        # immediately, so the other callers are unaffected.
+        transaction.on_commit(lambda task_id=task.id: start_download.delay(task_id))
 
 
 @shared_task
