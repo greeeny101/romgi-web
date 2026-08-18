@@ -9,12 +9,16 @@
 		entry,
 		platformName,
 		platformBrand,
-		href
+		href,
+		id,
+		highlighted = false
 	}: {
 		entry: EntrySummary;
 		platformName: string;
 		platformBrand?: string;
 		href: string;
+		id?: string;
+		highlighted?: boolean;
 	} = $props();
 
 	let imageFailed = $state(false);
@@ -22,7 +26,10 @@
 
 <a
 	{href}
+	{id}
 	class="flex items-center gap-3 rounded-lg border border-gray-200 bg-white p-2 transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700"
+	class:ring-2={highlighted}
+	class:ring-primary-500={highlighted}
 >
 	<div class="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded bg-gray-100 dark:bg-gray-900">
 		{#if entry.boxart_url && !imageFailed}
