@@ -165,6 +165,12 @@ STAGED_FILES_DIR = env.str("STAGED_FILES_DIR", default=str(BASE_DIR / "data" / "
 
 # --- Catalog ingestion ------------------------------------------------------
 CATALOG_BUILD_RETENTION = env.int("CATALOG_BUILD_RETENTION", default=2)
+# A build row only leaves "running" from inside the worker that owns it, so a
+# worker killed mid-run (restart, OOM) strands it there permanently — and the
+# "is a build already running?" guard then refuses every manual run forever.
+# Anything still running after this many hours is treated as abandoned. Must
+# stay comfortably above a real full-ingestion wall time (~1.5h observed).
+CATALOG_BUILD_STALE_AFTER_HOURS = env.int("CATALOG_BUILD_STALE_AFTER_HOURS", default=6)
 RETROACHIEVEMENTS_API_USER = env.str("RA_API_USER", default="")
 RETROACHIEVEMENTS_API_KEY = env.str("RA_API_KEY", default="")
 

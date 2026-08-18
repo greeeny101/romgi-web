@@ -377,6 +377,26 @@ def finalize_build(build: CatalogBuild) -> None:
         build.save(update_fields=["status", "finished_at"])
 
 
+def reap_stale_builds(older_than_hours: int) -> list[int]:
+    """Fail off builds abandoned by a dead worker.
+
+    `status` is only advanced by the task that owns the build, so a worker
+    killed mid-run leaves the row at "running" with no finished_at and
+    nothing to ever clear it. Since CatalogBuild has no heartbeat or task
+    id, age is the only available signal — hence a threshold well above a
+    real run rather than anything cleverer.
+    """
+    from django.utils import timezone
+
+    cutoff = timezone.now() - timezone.timedelta(hours=older_than_hours)
+    stale = list(
+        CatalogBuild.objects.filter(status="running", started_at__lt=cutoff).values_list("id", flat=True)
+    )
+    if stale:
+        CatalogBuild.objects.filter(id__in=stale).update(status="failed", finished_at=timezone.now())
+    return stale
+
+
 def gc_old_builds(keep: int) -> int:
     """Delete retired builds beyond the retention count. Cascades to their
     Entry/Link/EntryGroup rows via the build FK."""
