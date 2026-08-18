@@ -4,10 +4,11 @@ from libretro DAT files. It includes platform-specific configurations,
 functions to load and parse DAT files, and methods to enhance game entries
 with ROM IDs and box art URLs.
 """
-import requests
 import re
 from typing import Any
 from urllib.parse import quote, unquote
+
+import requests
 from utils.parse_utils import remove_ext
 
 # Platform-specific metadata definitions
@@ -317,6 +318,42 @@ PLATFORMS = {
     }
 }
 
+# Trailing parenthesised/bracketed tags — region, revision, dump status,
+# publisher, year. Everything before the first one is the game itself.
+_TAGS_RE = re.compile(r"\s*[\(\[].*", re.DOTALL)
+_PUNCT_RE = re.compile(r"[^a-z0-9]+")
+
+# Preference when several tagged variants share a base title. Art is usually
+# near-identical between regions, but a wrong-region cover is still worse
+# than the right one, so rank rather than taking whatever sorts first.
+_REGION_RANK = ['world', 'usa', 'us)', 'europe', '(eu', 'japan', '(jp']
+
+
+def title_stem(title: str) -> str:
+    """Comparable base title: tags dropped, punctuation and case flattened."""
+    return _PUNCT_RE.sub('', _TAGS_RE.sub('', title).lower())
+
+
+def _variant_rank(name: str) -> tuple[int, int, str]:
+    lower = name.lower()
+    region = next((i for i, r in enumerate(_REGION_RANK) if r in lower), len(_REGION_RANK))
+    # Prefer clean dumps: [b] bad, [o] overdump, [p] pirate, [h] hack.
+    bad = 1 if re.search(r"\[[bohp]\d*\]", lower) else 0
+    return (bad, region, name)
+
+
+def index_by_stem(names: list[str]) -> dict[str, str]:
+    """Base title -> best available filename carrying that title."""
+    best: dict[str, str] = {}
+    for name in names:
+        stem = title_stem(name)
+        if not stem:
+            continue
+        if stem not in best or _variant_rank(name) < _variant_rank(best[stem]):
+            best[stem] = name
+    return best
+
+
 # Global variable to store parsed DATs
 dbs: dict[str, dict[str, str]] | None = None
 
@@ -388,7 +425,14 @@ def parse(entries: list[dict[str, Any]], flags: dict[str, Any]) -> list[dict[str
             continue
 
         db = dbs.get(platform_id)
-        entry['rom_id'] = db.get(entry['title']) if db else None
+        # Only fill rom_id, never blank it: on arcade platforms the mame
+        # parser has already put the ROM short name here, and there is no
+        # libretro serial DAT to replace it with.
+        rom_id = db.get(entry['title']) if db else None
+        if rom_id:
+            entry['rom_id'] = rom_id
+        else:
+            entry.setdefault('rom_id', None)
 
         try:
             index_url = f"https://thumbnails.libretro.com/{quote(platform_info['system'])}/Named_Boxarts/"
@@ -402,9 +446,22 @@ def parse(entries: list[dict[str, Any]], flags: dict[str, Any]) -> list[dict[str
                 for result in results:
                     platform_info['available_boxarts'].append(
                         remove_ext(unquote(result)))
+                platform_info['boxarts_by_stem'] = index_by_stem(
+                    platform_info['available_boxarts'])
 
+            boxart_name = None
             if entry['title'] in platform_info['available_boxarts']:
-                entry['boxart_url'] = f"{index_url}{quote(entry['title'])}.png"
+                boxart_name = entry['title']
+            else:
+                # No exact filename match. libretro names art by the full
+                # No-Intro/DAT title, so the same game routinely differs only
+                # in its trailing tags — "Deja Vu (Beta 1)" against
+                # "Deja Vu (1990-12)(Seika)(US)[b]". Fall back to the base
+                # title and take the best-ranked regional variant.
+                boxart_name = platform_info['boxarts_by_stem'].get(title_stem(entry['title']))
+
+            if boxart_name:
+                entry['boxart_url'] = f"{index_url}{quote(boxart_name)}.png"
         except Exception as e:
             print(f"Warning: libretro enrichment failed for {platform_id}/{entry.get('title', '?')}: {e}")
 
