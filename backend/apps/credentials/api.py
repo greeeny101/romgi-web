@@ -18,6 +18,7 @@ from apps.metadata.providers.registry import registry as metadata_registry
 
 from .models import EncryptedCredential
 from .schemas import (
+    CredentialFieldOut,
     CredentialIn,
     CredentialStatusOut,
     InternetArchiveKeysIn,
@@ -126,6 +127,36 @@ def _provider_or_404(kind: str, provider_id: str):
     return provider
 
 
+_DEBRID_FIELDS = [CredentialFieldOut(key="api_key", label="API Key", obscure=True)]
+
+
+def _fields(kind: str, provider) -> list[CredentialFieldOut]:
+    """One description of a provider's credential shape, served to the
+    settings form so it can't drift from what the provider actually
+    requires (it did: ScreenScraper's developer credentials were rendered
+    as optional while api2 rejects every request without them)."""
+    if kind == "debrid":
+        return list(_DEBRID_FIELDS)
+    return [
+        CredentialFieldOut(key=f.key, label=f.label, obscure=f.obscure, optional=f.optional)
+        for f in provider.credential_fields
+    ]
+
+
+def _status_out(kind: str, provider, provider_id: str, credential: EncryptedCredential | None) -> CredentialStatusOut:
+    data = (credential.data if credential else None) or {}
+    fields = _fields(kind, provider)
+    stored = {f.key: (data.get(f.key) or "").strip() for f in fields}
+    return CredentialStatusOut(
+        provider=provider_id,
+        configured=credential is not None,
+        status=credential.status if credential else "unverified",
+        fields=fields,
+        stored_keys=[f.key for f in fields if stored[f.key]],
+        stored_values={f.key: stored[f.key] for f in fields if stored[f.key] and not f.obscure},
+    )
+
+
 def _is_configured(kind: str, provider, data: dict | None) -> bool:
     if kind == "debrid":
         return provider.is_configured((data or {}).get("api_key"))
@@ -140,30 +171,46 @@ def _validate(kind: str, provider, data: dict | None) -> str | None:
 
 @router.put("/{kind}/{provider_id}", response=CredentialStatusOut)
 def set_credential(request, kind: str, provider_id: str, payload: CredentialIn):
-    _provider_or_404(kind, provider_id)
+    """Merges into what's already stored rather than replacing it. The form
+    never renders a saved secret back, so an omitted field means "leave it
+    alone" — replacing wholesale meant filling in one box (a developer ID,
+    say) silently wiped the username and password saved beside it. Use
+    DELETE to actually clear a provider."""
+    provider = _provider_or_404(kind, provider_id)
+    existing = EncryptedCredential.objects.filter(user=request.user, provider=provider_id).first()
+    data = dict((existing.data if existing else None) or {})
+    for key, value in payload.data.items():
+        value = (value or "").strip()
+        if value:
+            data[key] = value
+
     credential, _ = EncryptedCredential.objects.update_or_create(
         user=request.user,
         provider=provider_id,
-        defaults={"data": payload.data, "status": "unverified", "failure_count": 0},
+        defaults={"data": data, "status": "unverified", "failure_count": 0},
     )
-    return CredentialStatusOut(provider=provider_id, configured=True, status=credential.status)
+    return _status_out(kind, provider, provider_id, credential)
 
 
 @router.get("/{kind}/{provider_id}", response=CredentialStatusOut)
 def get_credential_status(request, kind: str, provider_id: str):
-    _provider_or_404(kind, provider_id)
+    provider = _provider_or_404(kind, provider_id)
     credential = EncryptedCredential.objects.filter(user=request.user, provider=provider_id).first()
-    if credential is None:
-        return CredentialStatusOut(provider=provider_id, configured=False, status="unverified")
-    return CredentialStatusOut(provider=provider_id, configured=True, status=credential.status)
+    return _status_out(kind, provider, provider_id, credential)
 
 
 @router.post("/{kind}/{provider_id}/test", response=TestResultOut)
 def test_credential(request, kind: str, provider_id: str):
     provider = _provider_or_404(kind, provider_id)
     credential = EncryptedCredential.objects.filter(user=request.user, provider=provider_id).first()
-    if credential is None or not _is_configured(kind, provider, credential.data):
+    if credential is None:
         return TestResultOut(ok=False, message="No credentials set")
+    if not _is_configured(kind, provider, credential.data):
+        # Half-filled is the common case now that saving merges, so name the
+        # gap instead of claiming nothing is stored.
+        data = credential.data or {}
+        missing = [f.label for f in _fields(kind, provider) if not f.optional and not (data.get(f.key) or "").strip()]
+        return TestResultOut(ok=False, message=f"Missing required credentials: {', '.join(missing)}")
 
     error = _validate(kind, provider, credential.data)
     credential.status = "invalid" if error else "ok"

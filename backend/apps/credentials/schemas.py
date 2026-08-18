@@ -27,6 +27,13 @@ class InternetArchiveStatusOut(Schema):
     last_validated_at: str | None
 
 
+class CredentialFieldOut(Schema):
+    key: str
+    label: str
+    obscure: bool = False
+    optional: bool = False
+
+
 class CredentialIn(Schema):
     data: dict[str, str]
 
@@ -35,6 +42,13 @@ class CredentialStatusOut(Schema):
     provider: str
     configured: bool
     status: str
+    # What the vault actually holds, so the settings form can prove a save
+    # landed instead of silently blanking every box. Obscure fields are
+    # reported by name only (stored_keys); non-secret ones (a username, a
+    # developer ID) come back in stored_values so they can be shown.
+    fields: list[CredentialFieldOut] = []
+    stored_keys: list[str] = []
+    stored_values: dict[str, str] = {}
 
 
 class TestResultOut(Schema):

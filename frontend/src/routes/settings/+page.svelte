@@ -14,15 +14,13 @@
 		{ id: 'torbox', name: 'TorBox' },
 		{ id: 'realdebrid', name: 'Real-Debrid' }
 	];
-	const debridFields = [{ key: 'api_key', label: 'API Key', obscure: true }];
 
-	const screenScraperFields = [
-		{ key: 'username', label: 'Username' },
-		{ key: 'password', label: 'Password', obscure: true },
-		{ key: 'dev_id', label: 'Developer ID', optional: true },
-		{ key: 'dev_password', label: 'Developer Password', obscure: true, optional: true }
-	];
-	const steamGridDbFields = [{ key: 'api_key', label: 'API Key', obscure: true }];
+	// Field lists come from the backend now (GET /credentials/{kind}/{id}) so
+	// they can't disagree with what each provider actually requires.
+	const screenScraperHint =
+		"ScreenScraper's API authenticates on a developer ID and password — a personal " +
+		'account alone will not connect. Request developer access on the ScreenScraper ' +
+		'forum, then add your own account below to raise the request quota.';
 
 	let settings = $state<UserSettings | null>(null);
 	let loading = $state(true);
@@ -163,7 +161,7 @@
 			</div>
 			{#each debridProviders as provider (provider.id)}
 				{#if settings.debrid_provider_id === provider.id}
-					<CredentialForm kind="debrid" providerId={provider.id} providerName={provider.name} fields={debridFields} />
+					<CredentialForm kind="debrid" providerId={provider.id} providerName={provider.name} />
 				{/if}
 			{/each}
 		{/if}
@@ -174,8 +172,13 @@
 			<Toggle bind:checked={settings.metadata_enabled} />
 		</div>
 		{#if settings.metadata_enabled}
-			<CredentialForm kind="metadata" providerId="screenscraper" providerName="ScreenScraper" fields={screenScraperFields} />
-			<CredentialForm kind="metadata" providerId="steamgriddb" providerName="SteamGridDB" fields={steamGridDbFields} />
+			<CredentialForm
+				kind="metadata"
+				providerId="screenscraper"
+				providerName="ScreenScraper"
+				hint={screenScraperHint}
+			/>
+			<CredentialForm kind="metadata" providerId="steamgriddb" providerName="SteamGridDB" />
 		{/if}
 
 		<Button onclick={save} disabled={saving}>
