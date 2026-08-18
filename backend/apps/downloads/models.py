@@ -88,6 +88,12 @@ class DownloadTask(models.Model):
 
     class Meta:
         ordering = ["created_at"]
+        constraints = [
+            # One task per title per user: downloads.api.enqueue replaces
+            # the previous attempt rather than appending a second row, so
+            # the downloads page can't accumulate duplicates of a slug.
+            models.UniqueConstraint(fields=["user", "slug"], name="download_user_slug_uniq"),
+        ]
         indexes = [
             models.Index(fields=["user", "status"], name="download_user_status_idx"),
             models.Index(fields=["status"], name="download_status_idx"),

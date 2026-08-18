@@ -3,6 +3,7 @@
 	import type { EntrySummary } from '$lib/api/catalog';
 	import PlatformBadge from '$lib/components/platform/PlatformBadge.svelte';
 	import FavoriteButton from '$lib/components/favorites/FavoriteButton.svelte';
+	import DownloadedBadge from '$lib/components/downloads/DownloadedBadge.svelte';
 
 	let {
 		entry,
@@ -51,5 +52,8 @@
 			{/if}
 		</div>
 	</div>
-	<FavoriteButton slug={entry.slug} />
+	<div class="flex shrink-0 items-center gap-1">
+		<DownloadedBadge slug={entry.slug} platformId={entry.platform_id} />
+		<FavoriteButton slug={entry.slug} />
+	</div>
 </a>

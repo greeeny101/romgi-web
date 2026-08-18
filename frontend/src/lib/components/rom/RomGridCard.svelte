@@ -3,6 +3,7 @@
 	import type { EntrySummary } from '$lib/api/catalog';
 	import PlatformBadge from '$lib/components/platform/PlatformBadge.svelte';
 	import FavoriteButton from '$lib/components/favorites/FavoriteButton.svelte';
+	import DownloadedBadge from '$lib/components/downloads/DownloadedBadge.svelte';
 
 	let {
 		entry,
@@ -24,7 +25,8 @@
 	class="group flex flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm transition hover:shadow-md dark:border-gray-700 dark:bg-gray-800"
 >
 	<div class="relative flex aspect-[3/4] items-center justify-center overflow-hidden bg-gray-100 dark:bg-gray-900">
-		<div class="absolute top-2 right-2 z-10">
+		<div class="absolute top-2 right-2 z-10 flex items-center gap-1">
+			<DownloadedBadge slug={entry.slug} platformId={entry.platform_id} />
 			<FavoriteButton slug={entry.slug} />
 		</div>
 		{#if entry.boxart_url && !imageFailed}

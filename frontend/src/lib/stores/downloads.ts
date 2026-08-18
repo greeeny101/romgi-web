@@ -45,7 +45,10 @@ function createDownloadsStore() {
 
 	async function enqueue(payload: EnqueuePayload) {
 		const task = await downloadsApi.enqueue(payload);
-		upsert(task);
+		// Enqueuing replaces whatever task the slug already had (and a group
+		// enqueue creates more rows than the one returned), so resync rather
+		// than upserting — otherwise the rows it displaced linger in the list.
+		await load();
 		return task;
 	}
 

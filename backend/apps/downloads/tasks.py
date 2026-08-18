@@ -22,11 +22,14 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
+from urllib.parse import urlparse
 
 import requests
 from celery import shared_task
 from django.conf import settings as django_settings
+from django.db import transaction
 from django.utils import timezone
 
 from apps.accounts.models import UserSettings
@@ -48,7 +51,33 @@ USER_AGENT = (
     "Chrome/120.0.0.0 Mobile Safari/537.36"
 )
 MAX_HTTP_RETRIES = 3
-RETRYABLE_SUBSTRINGS = ("ssl", "handshake", "certificate", "tls", "connection reset", "connection refused")
+RETRYABLE_SUBSTRINGS = (
+    "ssl",
+    "handshake",
+    "certificate",
+    "tls",
+    "connection reset",
+    "connection refused",
+    # A body that stops short of its Content-Length surfaces as requests'
+    # ChunkedEncodingError wrapping urllib3's IncompleteRead ("Connection
+    # broken: IncompleteRead(N bytes read, M more expected)"). That is the
+    # textbook resumable interruption — the loop below re-requests with a
+    # Range header — but it used to match none of these substrings and so
+    # failed the task outright on the first hiccup.
+    "connection broken",
+    "connection aborted",
+    "incompleteread",
+    "response ended prematurely",
+)
+# `link_size` is not a byte count. It comes from a rounded human-readable
+# string scraped off the source page — size_str_to_bytes("1.4G") is
+# int(1.4 * 1024**3) = 1503238553 — so a real 1392 MiB file and a real
+# 1468 MiB file both arrive here as the same "1.4G". It is fine for
+# showing progress before the transfer starts and useless for deciding
+# whether one finished; only the server's own Content-Length can do that.
+# This tolerance exists solely to recognise an on-disk file so much bigger
+# than the estimate that it has to be junk.
+SIZE_ESTIMATE_TOLERANCE = 1.15
 DB_WRITE_INTERVAL = 2.0
 PROGRESS_PUSH_INTERVAL = 1.0
 ARCHIVE_EXTENSIONS = (".zip", ".7z")
@@ -81,7 +110,11 @@ def dispatch_next_for_user(user_id) -> None:
     if max_conc:
         pending_qs = pending_qs[: max_conc - active]
     for task in pending_qs:
-        start_download.delay(task.id)
+        # on_commit rather than a bare delay(): downloads.api.enqueue runs
+        # inside a transaction, and a worker that picked the id up before
+        # the commit would find no row. Outside a transaction this fires
+        # immediately, so the other callers are unaffected.
+        transaction.on_commit(lambda task_id=task.id: start_download.delay(task_id))
 
 
 @shared_task
@@ -96,6 +129,66 @@ def dispatch_pending_downloads() -> None:
 def _should_abort(task_id: int) -> bool:
     status = DownloadTask.objects.filter(id=task_id).values_list("status", flat=True).first()
     return status is None or status == "paused"
+
+
+def _same_domain(a: str, b: str) -> bool:
+    """True when two URLs sit on the same registrable domain, approximated
+    as the last two labels of the hostname. Good enough for the hosts this
+    pipeline actually talks to (archive.org and its node servers); it would
+    be too permissive for a multi-label public suffix like .co.uk, so keep
+    it out of any security decision beyond "may this credential follow this
+    redirect"."""
+    host_a = (urlparse(a).hostname or "").lower()
+    host_b = (urlparse(b).hostname or "").lower()
+    if not host_a or not host_b:
+        return False
+    return host_a == host_b or ".".join(host_a.split(".")[-2:]) == ".".join(host_b.split(".")[-2:])
+
+
+class _CredentialPreservingSession(requests.Session):
+    """requests deliberately drops credentials when a redirect changes
+    host: `rebuild_auth` deletes the Authorization header, and
+    `resolve_redirects` pops the Cookie header outright. That is the right
+    default for a redirect to a stranger, but archive.org/download/ URLs
+    *always* redirect to a per-item node host (dn711101.ca.archive.org,
+    ia800901.us.archive.org, ...), so both credentials were being discarded
+    exactly when they were needed — confirmed live, every auth variant
+    arrived at the node anonymous and got 401/403, which surfaced to the
+    user as "Internet Archive login required" no matter how they'd logged
+    in.
+
+    Re-attaching Authorization across a same-domain redirect fixes the S3
+    keys; cookies are handled by putting them in the session jar (see
+    _session_for) instead of pinning a Cookie header, which lets requests
+    scope and re-send them per host the way a browser would."""
+
+    def rebuild_auth(self, prepared_request, response):
+        kept = prepared_request.headers.get("Authorization")
+        super().rebuild_auth(prepared_request, response)
+        if (
+            kept
+            and "Authorization" not in prepared_request.headers
+            and _same_domain(response.request.url, prepared_request.url)
+        ):
+            prepared_request.headers["Authorization"] = kept
+
+
+def _session_for(url: str, headers: dict) -> requests.Session:
+    """Builds the download session, moving any `Cookie` header the adapter
+    set into the cookie jar so it survives redirects. Mutates `headers`:
+    the Cookie entry is consumed, because leaving it in place would have
+    requests fighting its own jar."""
+    session = _CredentialPreservingSession()
+    cookie_header = headers.pop("Cookie", None)
+    if not cookie_header:
+        return session
+    host = (urlparse(url).hostname or "").lower()
+    domain = "." + ".".join(host.split(".")[-2:]) if host else ""
+    for part in cookie_header.split(";"):
+        name, _, value = part.strip().partition("=")
+        if name:
+            session.cookies.set(name, value, domain=domain)
+    return session
 
 
 def _is_retryable(exc: Exception) -> bool:
@@ -253,7 +346,11 @@ def http_download(task_id: int) -> None:
     if task.link_size and existing_size == task.link_size:
         _finish_download(task, dest_path)
         return
-    if task.link_size and existing_size > task.link_size:
+    # Only discard an existing partial when it overshoots the estimate by
+    # more than the estimate's own rounding error could explain — a
+    # complete file *legitimately* comes out larger than a link_size that
+    # rounded down, and deleting it there meant re-downloading forever.
+    if task.link_size and existing_size > task.link_size * SIZE_ESTIMATE_TOLERANCE:
         os.remove(dest_path)
 
     headers = {
@@ -264,8 +361,13 @@ def http_download(task_id: int) -> None:
     }
     adapter = registry.adapter_for(task)
     adapter.prepare_headers(headers, task)
+    session = _session_for(task.link_url, headers)
 
     task_attempt_start_bytes = os.path.getsize(dest_path) if os.path.exists(dest_path) else 0
+    # The authoritative expected size, learned from the server on whichever
+    # attempt last reported one. None means the server never said, and
+    # nothing on this side can verify completeness.
+    server_total: int | None = None
     start_time = time.monotonic()
     last_db_write = 0.0
     last_push = 0.0
@@ -278,8 +380,19 @@ def http_download(task_id: int) -> None:
             attempt_headers["Range"] = f"bytes={current_size}-"
 
         try:
-            with requests.get(task.link_url, headers=attempt_headers, stream=True, timeout=30) as resp:
+            with session.get(task.link_url, headers=attempt_headers, stream=True, timeout=30) as resp:
                 if resp.status_code == 416:
+                    # The requested range starts at or past EOF, so the
+                    # file on disk is already whole — which is the *normal*
+                    # outcome of resuming a download that actually
+                    # finished. 416 carries the real total in
+                    # "Content-Range: bytes */<total>"; trust it before
+                    # throwing the file away and starting from zero.
+                    content_range = resp.headers.get("Content-Range", "")
+                    match = re.search(r"/(\d+)\s*$", content_range)
+                    if match and current_size == int(match.group(1)):
+                        server_total = current_size
+                        break
                     if os.path.exists(dest_path):
                         os.remove(dest_path)
                     task.downloaded_bytes = 0
@@ -310,7 +423,13 @@ def http_download(task_id: int) -> None:
                 received = current_size if range_honored else 0
 
                 content_length = resp.headers.get("Content-Length")
-                total_bytes = (int(content_length) + received) if content_length else task.link_size
+                # Content-Length describes the bytes *on the wire*, while
+                # iter_content below yields decoded ones, so it's only a
+                # true size when the body isn't content-encoded.
+                content_encoding = (resp.headers.get("Content-Encoding") or "identity").lower()
+                if content_length and content_encoding == "identity":
+                    server_total = int(content_length) + received
+                total_bytes = server_total or task.link_size
 
                 aborted = False
                 with open(dest_path, mode) as fh:
@@ -362,14 +481,25 @@ def http_download(task_id: int) -> None:
             continue
 
     final_size = os.path.getsize(dest_path)
-    if task.link_size and final_size != task.link_size:
-        os.remove(dest_path)
+    # Verified against the server's Content-Length, never against
+    # task.link_size — see SIZE_ESTIMATE_TOLERANCE. Comparing to the
+    # estimate rejected (and deleted) downloads that had completed
+    # perfectly, because a rounded "1.4G" never equals a real byte count.
+    if server_total and final_size != server_total:
+        if final_size > server_total:
+            # More bytes than the server ever promised: the file is junk,
+            # and keeping it would make the next attempt resume past EOF.
+            os.remove(dest_path)
         task.status = "failed"
-        task.error = f"Download incomplete ({final_size} of {task.link_size} bytes)"
+        task.error = f"Download incomplete ({final_size} of {server_total} bytes)"
         task.save(update_fields=["status", "error", "updated_at"])
         push_status(task)
         dispatch_next_for_user(task.user_id)
         return
+    if server_total is None:
+        logger.warning(
+            "Download for task %s finished at %s bytes with no Content-Length to verify against", task.id, final_size
+        )
 
     task.downloaded_bytes = final_size
     task.total_bytes = final_size

@@ -33,6 +33,8 @@ export const credentialsApi = {
 	iaLogin: (username: string, password: string) =>
 		apiPost<LoginTask>('/credentials/internet-archive/login', { username, password }),
 	iaLoginStatus: (taskId: string) => apiGet<LoginStatus>(`/credentials/internet-archive/login/${taskId}`),
+	iaSetKeys: (access_key: string, secret_key: string) =>
+		apiPut<InternetArchiveStatus>('/credentials/internet-archive/keys', { access_key, secret_key }),
 	iaStatus: () => apiGet<InternetArchiveStatus>('/credentials/internet-archive/status'),
 	iaLogout: () => apiPost<void>('/credentials/internet-archive/logout'),
 

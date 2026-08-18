@@ -3,11 +3,17 @@ Ninja endpoints for the downloads app. `POST /downloads` snapshots the
 caller's chosen Link (or every member of a group) into a new DownloadTask
 and hands off to Celery; live progress travels over the Channels WS
 (apps.realtime.consumers.DownloadProgressConsumer), not polling.
+
+A slug gets at most one DownloadTask per user (enforced by
+DownloadTask's download_user_slug_uniq constraint): re-downloading a
+title replaces the previous attempt instead of stacking another row.
 """
 
 import os
+import shutil
 
 from django.conf import settings as django_settings
+from django.db import transaction
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -23,10 +29,6 @@ from .tasks import dispatch_next_for_user
 
 router = Router(tags=["downloads"], auth=JWTAuth())
 
-# A task in one of these states already occupies a slot for its slug — a
-# fresh enqueue of the same title would just duplicate it in the queue.
-ACTIVE_STATUSES = ("pending", "downloading", "paused", "extracting")
-
 
 def _active_build() -> CatalogBuild:
     build = CatalogBuild.objects.filter(status="active").order_by("-started_at").first()
@@ -35,8 +37,28 @@ def _active_build() -> CatalogBuild:
     return build
 
 
-def _active_task_for(user, slug: str) -> DownloadTask | None:
-    return DownloadTask.objects.filter(user=user, slug=slug, status__in=ACTIVE_STATUSES).first()
+def _discard_task(task: DownloadTask) -> None:
+    """Tears a task down completely: drops the row, its staged bytes and
+    its qBittorrent slot. The filesystem/Celery side effects are deferred
+    to commit so a rolled-back transaction can't leave a surviving row
+    pointing at a directory that's already gone."""
+    torrent_hash = task.torrent_hash
+    directory = os.path.join(django_settings.STAGED_FILES_DIR, str(task.id))
+    task.delete()
+    transaction.on_commit(lambda: shutil.rmtree(directory, ignore_errors=True))
+    if torrent_hash:
+        from apps.torrents.tasks import cancel_torrent
+
+        transaction.on_commit(lambda: cancel_torrent.delay(torrent_hash))
+
+
+def _discard_existing(user, slug: str) -> None:
+    """Clears the way for a re-download of `slug`. Enqueue used to refuse
+    while a task was still in flight and silently append a second row once
+    it wasn't, which is what left duplicate entries on the downloads page;
+    now the newest request always wins and there is only ever one row."""
+    for task in DownloadTask.objects.filter(user=user, slug=slug):
+        _discard_task(task)
 
 
 def _out(task: DownloadTask, sources_by_id: dict[str, str] | None = None) -> DownloadTaskOut:
@@ -97,33 +119,33 @@ def _enqueue_one(user, entry: Entry, link: Link, group: EntryGroup | None = None
 
 
 @router.post("", response=DownloadTaskOut)
+@transaction.atomic
 def enqueue(request, payload: EnqueueIn):
+    """Enqueues a title, replacing any task the user already has for the
+    same slug. Each link is resolved before its predecessor is discarded,
+    so a request that turns out to have nothing to download leaves the
+    existing queue untouched."""
     build = _active_build()
 
     if payload.group_id is not None:
         group = get_object_or_404(EntryGroup, id=payload.group_id, build=build)
+        members = [
+            (member, member.entry.links.order_by("-source__priority").first())
+            for member in group.members.select_related("entry").order_by("member_index")
+        ]
+        if not any(link for _, link in members):
+            raise HttpError(404, "No downloadable links found for this group.")
         created = None
-        any_active = False
-        for member in group.members.select_related("entry").order_by("member_index"):
-            if _active_task_for(request.user, member.entry.slug):
-                any_active = True
-                continue
-            link = member.entry.links.order_by("-source__priority").first()
+        for member, link in members:
             if link is None:
                 continue
+            _discard_existing(request.user, member.entry.slug)
             task = _enqueue_one(request.user, member.entry, link, group=group, group_index=member.member_index)
             created = created or task
-        if created is None:
-            if any_active:
-                raise HttpError(409, "This title is already in your download queue.")
-            raise HttpError(404, "No downloadable links found for this group.")
         dispatch_next_for_user(request.user.id)
         return _out(created)
 
     entry = get_object_or_404(Entry, slug=payload.slug, build=build)
-    if _active_task_for(request.user, entry.slug):
-        raise HttpError(409, f'"{entry.title}" is already in your download queue.')
-
     if payload.link_id is not None:
         link = get_object_or_404(Link, id=payload.link_id, entry=entry)
     else:
@@ -131,6 +153,7 @@ def enqueue(request, payload: EnqueueIn):
         if link is None:
             raise HttpError(404, "No links found for this entry.")
 
+    _discard_existing(request.user, entry.slug)
     task = _enqueue_one(request.user, entry, link)
     dispatch_next_for_user(request.user.id)
     return _out(task)
@@ -211,12 +234,7 @@ def retry_download(request, task_id: int):
 def cancel_download(request, task_id: int):
     task = get_object_or_404(DownloadTask, id=task_id, user=request.user)
     user_id = task.user_id
-    torrent_hash = task.torrent_hash
-    task.delete()
-    if torrent_hash:
-        from apps.torrents.tasks import cancel_torrent
-
-        cancel_torrent.delay(torrent_hash)
+    _discard_task(task)
     dispatch_next_for_user(user_id)
     return 204, None
 

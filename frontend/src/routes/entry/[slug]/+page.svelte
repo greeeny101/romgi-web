@@ -1,11 +1,9 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { goto } from '$app/navigation';
 	import { Spinner, Badge } from 'flowbite-svelte';
 	import { ImageOutline, DownloadOutline } from 'flowbite-svelte-icons';
 	import { catalogApi, type EntryDetail, type Link as CatalogLink, type Platform } from '$lib/api/catalog';
 	import { libraryApi } from '$lib/api/library';
-	import { downloadsApi } from '$lib/api/downloads';
 	import { downloads } from '$lib/stores/downloads';
 	import { metadataApi, type GameMetadata } from '$lib/api/metadata';
 	import { ApiError } from '$lib/api/client';
@@ -13,6 +11,7 @@
 	import PlatformBadge from '$lib/components/platform/PlatformBadge.svelte';
 	import FavoriteButton from '$lib/components/favorites/FavoriteButton.svelte';
 	import MetadataCard from '$lib/components/metadata/MetadataCard.svelte';
+	import DownloadQueueRow from '$lib/components/downloads/DownloadQueueRow.svelte';
 
 	let slug = $derived(page.params.slug ?? '');
 
@@ -24,17 +23,17 @@
 	let error = $state<string | null>(null);
 	let enqueuingLinkId = $state<number | null>(null);
 
-	const ACTIVE_STATUSES = ['pending', 'downloading', 'paused', 'extracting'];
-	let alreadyQueued = $derived(
-		$downloads.some((t) => t.slug === entry?.slug && ACTIVE_STATUSES.includes(t.status))
-	);
+	// The store holds every task, whatever its status, so this is the same
+	// row the downloads page shows — including finished and failed ones.
+	let queuedTask = $derived($downloads.find((t) => t.slug === entry?.slug) ?? null);
 
 	async function enqueueLink(link: CatalogLink) {
-		if (!entry || alreadyQueued) return;
+		if (!entry) return;
 		enqueuingLinkId = link.id;
 		try {
-			await downloadsApi.enqueue({ slug: entry.slug, link_id: link.id });
-			await goto('/downloads');
+			// Replaces queuedTask server-side rather than queuing a second
+			// copy of this title — see downloads.api._discard_existing.
+			await downloads.enqueue({ slug: entry.slug, link_id: link.id });
 		} catch (err) {
 			error = err instanceof ApiError ? err.message : 'Failed to start download.';
 		} finally {
@@ -118,16 +117,21 @@
 				<MetadataCard {metadata} />
 			{/if}
 
+			{#if queuedTask}
+				<h2 class="mt-4 text-sm font-semibold tracking-wide text-gray-500 uppercase dark:text-gray-400">
+					Download status
+				</h2>
+				<DownloadQueueRow task={queuedTask} />
+				<p class="text-xs text-gray-500 dark:text-gray-400">
+					Shown on your <a href="/downloads" class="text-primary-600 hover:underline dark:text-primary-400"
+						>downloads page</a
+					>. Starting another link below replaces this download.
+				</p>
+			{/if}
+
 			<h2 class="mt-4 text-sm font-semibold tracking-wide text-gray-500 uppercase dark:text-gray-400">
 				Download links
 			</h2>
-			{#if alreadyQueued}
-				<p class="text-xs text-gray-500 dark:text-gray-400">
-					Already in your <a href="/downloads" class="text-primary-600 hover:underline dark:text-primary-400"
-						>download queue</a
-					>.
-				</p>
-			{/if}
 			{#if links.length === 0}
 				<p class="text-sm text-gray-500 dark:text-gray-400">No links found for this entry.</p>
 			{:else}
@@ -148,11 +152,15 @@
 							<button
 								type="button"
 								class="flex shrink-0 items-center gap-1 rounded bg-primary-600 px-2 py-1 text-xs text-white hover:bg-primary-700 disabled:opacity-50"
-								disabled={enqueuingLinkId === link.id || alreadyQueued}
+								disabled={enqueuingLinkId !== null}
 								onclick={() => enqueueLink(link)}
 							>
 								<DownloadOutline class="h-3.5 w-3.5" />
-								{enqueuingLinkId === link.id ? 'Starting…' : alreadyQueued ? 'Queued' : 'Download'}
+								{enqueuingLinkId === link.id
+									? 'Starting…'
+									: queuedTask
+										? 'Replace'
+										: 'Download'}
 							</button>
 						</li>
 					{/each}
