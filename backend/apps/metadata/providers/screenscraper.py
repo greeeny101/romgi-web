@@ -4,7 +4,16 @@ dev_password are required here and the end-user account is optional."""
 
 import requests
 
-from .base import CredentialField, MetadataError, MetadataFound, MetadataNoMatch, MetadataProvider, MetadataProviderInfo, MetadataResult
+from .base import (
+    CredentialField,
+    MediaItem,
+    MetadataError,
+    MetadataFound,
+    MetadataNoMatch,
+    MetadataProvider,
+    MetadataProviderInfo,
+    MetadataResult,
+)
 from .screenscraper_systems import SCREENSCRAPER_SYSTEM_IDS
 
 BASE_URL = "https://api.screenscraper.fr/api2"
@@ -64,17 +73,19 @@ def _synopsis(jeu: dict) -> str | None:
     return text or None
 
 
-def _screenshots(jeu: dict) -> list[str]:
-    urls = []
+def _screenshots(jeu: dict) -> list[MediaItem]:
+    # No thumbnail variant comes back in `medias` — MediaItem falls back to
+    # serving the original for display as well as for the link-out.
+    items = []
     for media in jeu.get("medias") or []:
         if not isinstance(media, dict) or media.get("type") not in ("ss", "sstitle"):
             continue
         url = media.get("url")
         if url:
-            urls.append(url)
-        if len(urls) >= 8:
+            items.append(MediaItem(full=url))
+        if len(items) >= 8:
             break
-    return urls
+    return items
 
 
 class ScreenScraperProvider(MetadataProvider):
@@ -158,4 +169,4 @@ class ScreenScraperProvider(MetadataProvider):
         if chosen is None:
             chosen = jeux[0]
 
-        return MetadataFound(description=_synopsis(chosen), screenshot_urls=_screenshots(chosen))
+        return MetadataFound(description=_synopsis(chosen), screenshots=_screenshots(chosen))

@@ -14,7 +14,7 @@ from ninja_jwt.authentication import JWTAuth
 from apps.accounts.models import UserSettings
 from apps.catalog.models import CatalogBuild, Entry
 
-from .schemas import GameMetadataOut
+from .schemas import GameMetadataOut, MediaOut
 from .service import get_metadata
 
 router = Router(tags=["metadata"], auth=JWTAuth())
@@ -35,5 +35,7 @@ def get_entry_metadata(request, slug: str):
     if result is None:
         return 204, None
     return 200, GameMetadataOut(
-        description=result.description, screenshot_urls=result.screenshot_urls, artwork_urls=result.artwork_urls
+        description=result.description,
+        screenshots=[MediaOut(full=m.full, thumb=m.thumb) for m in result.screenshots],
+        artwork=[MediaOut(full=m.full, thumb=m.thumb) for m in result.artwork],
     )

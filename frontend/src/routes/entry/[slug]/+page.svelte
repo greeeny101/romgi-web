@@ -132,7 +132,7 @@
 				{/if}
 			</div>
 
-			{#if metadata && (metadata.description || metadata.screenshot_urls.length || metadata.artwork_urls.length)}
+			{#if metadata && (metadata.description || metadata.screenshots.length || metadata.artwork.length)}
 				<MetadataCard {metadata} />
 			{/if}
 
