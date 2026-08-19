@@ -1,64 +1,14 @@
 """
 This module provides utilities for parsing and processing game titles,
-primarily following the No-Intro naming convention. It includes functions
-to extract regions, clean up titles, and normalize their structure.
+primarily following the No-Intro naming convention. It cleans up titles and
+normalizes their structure; the region vocabulary and the region parse itself
+live in parsers.region_titles, so platforms that don't run this parser can
+still fall back to them.
 """
 import re
 from typing import Any
+from parsers.region_titles import LANGUAGES, REGIONS_MAP, parse_regions
 from utils.parse_utils import normalize_repeated_chars
-
-# Mapping of regions to their respective database region
-REGIONS_MAP = {
-    'USA': 'us',
-    'Canada': 'us',
-    'Mexico': 'us',
-    'Europe': 'eu',
-    'Australia': 'eu',
-    'Italy': 'eu',
-    'Germany': 'eu',
-    'France': 'eu',
-    'Spain': 'eu',
-    'United Kingdom': 'eu',
-    'UK': 'eu',
-    'Netherlands': 'eu',
-    'Austria': 'eu',
-    'Belgium': 'eu',
-    'Croatia': 'eu',
-    'Denmark': 'eu',
-    'Finland': 'eu',
-    'Greece': 'eu',
-    'Ireland': 'eu',
-    'Poland': 'eu',
-    'Portugal': 'eu',
-    'Sweden': 'eu',
-    'Turkey': 'eu',
-    'Japan': 'jp',
-    'Argentina': 'other',
-    'Brazil': 'other',
-    'China': 'other',
-    'Hong Kong': 'other',
-    'India': 'other',
-    'Israel': 'other',
-    'Korea': 'other',
-    'Latin America': 'other',
-    'New Zealand': 'other',
-    'Norway': 'other',
-    'Russia': 'other',
-    'Scandinavia': 'other',
-    'South Africa': 'other',
-    'Switzerland': 'other',
-    'Taiwan': 'other',
-    'United Arab Emirates': 'other',
-    'Asia': 'other',
-    'Unknown': 'other'
-}
-
-# List of possible languages described in a title
-LANGUAGES = [
-    'En', 'Ja', 'Fr', 'De', 'Es', 'It', 'Nl', 'Pt', 'Sv', 'No', 'Da', 'Fi',
-    'Zh', 'Ko', 'Pl', 'Ru', 'Cs', 'Hu', 'Zh-Hant', 'Zh-Hans', 'El', 'Es-XL',
-    'Pt-BR', 'Tr', 'En-GB', 'Ar', 'En+En', 'It+En', 'Ro', 'Af'
-]
 
 # List of contents that are in parentheses to remove from titles
 TITLE_REMOVE_LIST = [
@@ -70,28 +20,6 @@ WORD_ARTICLES = [
     'the', 'die', 'la', 'des', 'das', 'le', 'l\'', 'ein', 'der', 'het', 'el',
     'il', 'i', 'los', 'os'
 ]
-
-
-def parse_regions(title: str) -> list[str]:
-    """Parse the regions from a title."""
-    # Extract all groups of parentheses from the title
-    matches = re.findall(r"\((.*?)\)", title)
-
-    # Split the contents of each parentheses group into subgroups
-    groups = [group.split(',') for group in matches]
-
-    regions = []
-    for group in groups:
-        for content in group:
-            content = content.strip()
-            region = REGIONS_MAP.get(content)
-            if region and region not in regions:
-                regions.append(region)
-        # Stop processing further groups if regions are found
-        if regions:
-            break
-
-    return regions
 
 
 def remove_groups_with_contents(title: str, contents_to_remove: list[str]) -> str:

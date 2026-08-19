@@ -38,11 +38,24 @@
 			<FavoriteButton slug={entry.slug} />
 		</div>
 		{#if entry.boxart_url && !imageFailed}
+			<!-- Box art comes in mixed ratios (libretro Named_Boxarts, GameTDB covers), so the
+			     cover is contained rather than cropped. A blurred copy of the same image fills
+			     the leftover space; it reuses the cached URL, so there's no extra request.
+			     scale-110 hides the feathered edge the blur leaves at the image boundary. -->
+			<img
+				src={entry.boxart_url}
+				alt=""
+				aria-hidden="true"
+				loading="lazy"
+				class="pointer-events-none absolute inset-0 h-full w-full scale-110 object-cover blur-xl brightness-75 dark:brightness-50"
+			/>
+			<!-- p-1 gives group-hover:scale-105 room to grow into: object-contain leaves the art
+			     flush with the box on its constrained axis, so without the inset the zoom clips it. -->
 			<img
 				src={entry.boxart_url}
 				alt={entry.title}
 				loading="lazy"
-				class="h-full w-full object-cover transition duration-200 group-hover:scale-105"
+				class="relative h-full w-full object-contain p-1 transition duration-200 group-hover:scale-105"
 				onerror={() => (imageFailed = true)}
 			/>
 		{:else}

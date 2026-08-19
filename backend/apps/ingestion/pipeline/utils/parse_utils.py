@@ -47,7 +47,10 @@ def create_slug(entry: dict[str, Any]) -> str:
     title = replace_invalid_chars(title)
     title = unidecode(title)
     platform = entry['platform']
-    regions = '-'.join(entry['regions'])
+    # Sorted, not insertion-ordered: the slug is the identity two sources
+    # coalesce on, and the same title reaching us as ['eu', 'us'] from one and
+    # ['us', 'eu'] from another would otherwise become two entries.
+    regions = '-'.join(sorted(entry['regions']))
     slug = f"{title}-{platform}-{regions}"
     
     slug = re.sub(r"[^a-zA-Z0-9-]", '-', slug).lower()

@@ -11,6 +11,7 @@
 	import ErrorView from '$lib/components/common/ErrorView.svelte';
 	import PlatformBadge from '$lib/components/platform/PlatformBadge.svelte';
 	import RegionFlags from '$lib/components/region/RegionFlags.svelte';
+	import { REGION_LABELS } from '$lib/regions';
 	import FavoriteButton from '$lib/components/favorites/FavoriteButton.svelte';
 	import MetadataCard from '$lib/components/metadata/MetadataCard.svelte';
 	import DownloadQueueRow from '$lib/components/downloads/DownloadQueueRow.svelte';
@@ -104,9 +105,17 @@
 	<ErrorView message={error} onRetry={load} />
 {:else if entry}
 	<div class="flex flex-col gap-6 sm:flex-row">
-		<div class="flex aspect-[3/4] w-full max-w-xs shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gray-100 dark:bg-gray-800">
+		<div class="relative flex aspect-[3/4] w-full max-w-xs shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gray-100 dark:bg-gray-800">
 			{#if entry.boxart_url}
-				<img src={entry.boxart_url} alt={entry.title} class="h-full w-full object-cover" />
+				<!-- Same contain-plus-blurred-backdrop treatment as RomGridCard: box art ratios
+				     vary by source, so the cover is shown whole and the blur fills the rest. -->
+				<img
+					src={entry.boxart_url}
+					alt=""
+					aria-hidden="true"
+					class="pointer-events-none absolute inset-0 h-full w-full scale-110 object-cover blur-xl brightness-75 dark:brightness-50"
+				/>
+				<img src={entry.boxart_url} alt={entry.title} class="relative h-full w-full object-contain p-1" />
 			{:else}
 				<ImageOutline class="h-16 w-16 text-gray-300 dark:text-gray-600" />
 			{/if}
@@ -122,7 +131,7 @@
 				{#each entry.regions as region (region)}
 					<Badge color="gray" class="items-center gap-1">
 						<RegionFlags regions={[region]} size="h-3.5 w-3.5" />
-						{region.toUpperCase()}
+						{REGION_LABELS[region] ?? region.toUpperCase()}
 					</Badge>
 				{/each}
 				{#if entry.ra_game_id}

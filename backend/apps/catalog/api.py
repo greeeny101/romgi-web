@@ -11,6 +11,7 @@ from django.shortcuts import get_object_or_404
 from ninja import Query, Router
 
 from .models import CatalogBuild, Entry, EntryGroup, Platform, Region, Source, SourceHealth
+from .regions import expand_region_filter
 from .schemas import (
     EntryDetailOut,
     EntryGroupMemberOut,
@@ -85,7 +86,12 @@ def list_entries(
     if platform:
         qs = qs.filter(platform_id=platform)
     if region:
-        qs = qs.filter(regions__id=region)
+        # Widened to the region's group — picking Germany also returns plain
+        # Europe releases, picking Europe returns its countries, and 'World'
+        # releases match everything. .distinct() because an entry tagged with
+        # two ids in that set would otherwise duplicate across the M2M join
+        # and throw off both `total` and the slice below.
+        qs = qs.filter(regions__id__in=expand_region_filter(region)).distinct()
     if source:
         qs = qs.filter(links__source_id=source).distinct()
 
