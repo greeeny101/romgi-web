@@ -46,3 +46,6 @@ class DownloadTaskOut(Schema):
     # by download_file. Distinct from completed_at: that says the server has
     # the ROM, this says *you* do.
     first_retrieved_at: str | None
+    # Moves on every save, unlike first_retrieved_at — this is what the
+    # Library's Saved badge shows.
+    last_retrieved_at: str | None

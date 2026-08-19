@@ -54,6 +54,7 @@ def _serialize(task) -> dict:
         "file_size": _staged_size(task),
         "expires_at": task.expires_at.isoformat() if task.expires_at else None,
         "first_retrieved_at": task.first_retrieved_at.isoformat() if task.first_retrieved_at else None,
+        "last_retrieved_at": task.last_retrieved_at.isoformat() if task.last_retrieved_at else None,
     }
 
 

@@ -92,13 +92,15 @@
 			if (target) await saveToFolder(target, name, blob);
 			else anchorDownload(blob, name);
 
-			// The GET already stamped first_retrieved_at server-side; mirror it
-			// here so the Saved badge flips straight away instead of waiting for
-			// the next load(). Only after the write actually succeeded — a
-			// failed saveToFolder throws past this.
+			// The GET already stamped these server-side; mirror them here so the
+			// Saved badge updates straight away instead of waiting for the next
+			// load(). Only after the write actually succeeded — a failed
+			// saveToFolder throws past this. last_retrieved_at moves on every
+			// save, first_retrieved_at only the first time.
+			const savedAt = new Date().toISOString();
 			downloaded = downloaded.map((t) =>
-				t.id === task.id && !t.first_retrieved_at
-					? { ...t, first_retrieved_at: new Date().toISOString() }
+				t.id === task.id
+					? { ...t, last_retrieved_at: savedAt, first_retrieved_at: t.first_retrieved_at ?? savedAt }
 					: t
 			);
 		} catch (err) {
@@ -168,8 +170,8 @@
 				// you still have work to do on. Saved rows then fall back to
 				// most recently saved.
 				return (
-					Number(Boolean(a.first_retrieved_at)) - Number(Boolean(b.first_retrieved_at)) ||
-					(b.first_retrieved_at ?? '').localeCompare(a.first_retrieved_at ?? '') ||
+					Number(Boolean(a.last_retrieved_at)) - Number(Boolean(b.last_retrieved_at)) ||
+					(b.last_retrieved_at ?? '').localeCompare(a.last_retrieved_at ?? '') ||
 					a.id - b.id
 				);
 			default:
@@ -319,7 +321,7 @@
 						</div>
 						<div class="flex flex-wrap items-center gap-2">
 							<DownloadedBadge variant="pill" completedAt={task.completed_at ?? task.created_at} />
-							<SavedLocallyBadge savedAt={task.first_retrieved_at} />
+							<SavedLocallyBadge savedAt={task.last_retrieved_at} firstSavedAt={task.first_retrieved_at} />
 							{#if !task.file_available}
 								<span class="text-xs text-gray-400 dark:text-gray-500">File removed from server</span>
 							{:else if formatExpiry(task.expires_at)}

@@ -90,7 +90,13 @@ class DownloadTask(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     completed_at = models.DateTimeField(null=True, blank=True)
+    # first_retrieved_at is load-bearing for retention — cleanup_expired_staged_files
+    # treats a null as "nobody ever claimed this" and purges it after
+    # STAGED_FILE_UNCLAIMED_DAYS — so it must keep meaning *first*.
+    # last_retrieved_at is what the Library's Saved badge shows, since
+    # re-saving a file should move that date.
     first_retrieved_at = models.DateTimeField(null=True, blank=True)
+    last_retrieved_at = models.DateTimeField(null=True, blank=True)
     expires_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:

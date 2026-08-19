@@ -6,15 +6,25 @@
 	// answer different questions. Green "Downloaded" means the server fetched
 	// the ROM from the source; blue "Saved" means the bytes reached *this*
 	// user's machine. A row can sit at the first for days without the second.
-	let { savedAt }: { savedAt: string | null } = $props();
+	// savedAt is the *most recent* save, so re-saving moves the date. firstSavedAt
+	// is optional and only surfaces in the tooltip, to distinguish "saved once,
+	// months ago" from "saved again just now".
+	let { savedAt, firstSavedAt = null }: { savedAt: string | null; firstSavedAt?: string | null } =
+		$props();
 
 	let stamp = $derived(savedAt ? formatDateTime(savedAt) : null);
+	let firstStamp = $derived(firstSavedAt ? formatDateTime(firstSavedAt) : null);
+	let title = $derived(
+		firstStamp && firstStamp !== stamp
+			? `Last saved ${stamp} — first saved ${firstStamp}`
+			: `You saved this file on ${stamp}`
+	);
 </script>
 
 {#if stamp}
 	<span
 		class="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-900 dark:bg-blue-900/30 dark:text-blue-300"
-		title="You saved this file on {stamp}"
+		{title}
 	>
 		<FloppyDiskSolid class="h-3.5 w-3.5" />
 		Saved

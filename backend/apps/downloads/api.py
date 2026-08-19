@@ -115,6 +115,7 @@ def _out(task: DownloadTask, sources_by_id: dict[str, str] | None = None) -> Dow
         file_size=_staged_size(task),
         expires_at=task.expires_at.isoformat() if task.expires_at else None,
         first_retrieved_at=task.first_retrieved_at.isoformat() if task.first_retrieved_at else None,
+        last_retrieved_at=task.last_retrieved_at.isoformat() if task.last_retrieved_at else None,
     )
 
 
@@ -282,8 +283,15 @@ def download_file(request, task_id: int):
         task.save(update_fields=["staged_file"])
         raise Http404("Staged file no longer available.")
 
+    # last_retrieved_at moves every time; first_retrieved_at is set once and
+    # then left alone, because cleanup_expired_staged_files reads a null there
+    # as "nobody ever claimed this".
+    now = timezone.now()
+    fields = ["last_retrieved_at"]
+    task.last_retrieved_at = now
     if task.first_retrieved_at is None:
-        task.first_retrieved_at = timezone.now()
-        task.save(update_fields=["first_retrieved_at"])
+        task.first_retrieved_at = now
+        fields.append("first_retrieved_at")
+    task.save(update_fields=fields)
 
     return FileResponse(open(path, "rb"), as_attachment=True, filename=os.path.basename(path))

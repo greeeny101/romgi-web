@@ -49,6 +49,9 @@ export interface DownloadTask {
 	// When you first saved the bytes to your own machine. completed_at means
 	// the server has it; this means you do.
 	first_retrieved_at: string | null;
+	// Moves on every save, unlike first_retrieved_at — this is what the Saved
+	// badge shows, so re-saving a file updates the date.
+	last_retrieved_at: string | null;
 	// Torrent-only, live-only — present in WS progress updates while
 	// downloading, never persisted (see downloads.progress.push_progress).
 	num_seeds?: number;
