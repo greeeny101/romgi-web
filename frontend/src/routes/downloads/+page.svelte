@@ -11,6 +11,7 @@
 	import StatusPills from '$lib/components/downloads/StatusPills.svelte';
 	import { statusOrder } from '$lib/components/downloads/statusColor';
 	import FilterBar from '$lib/components/filters/FilterBar.svelte';
+	import { expandRegionFilter } from '$lib/regions';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ErrorView from '$lib/components/common/ErrorView.svelte';
 
@@ -57,7 +58,12 @@
 	);
 
 	let platformOptions = $derived(platforms.filter((p) => presentPlatforms.has(p.id)));
-	let regionOptions = $derived(regions.filter((r) => presentRegions.has(r.id)));
+	// Offered if *anything the region widens to* is in the queue — picking
+	// Germany also matches plain Europe rows, so offering it only when a `de`
+	// row exists would hide a filter that would have found something.
+	let regionOptions = $derived(
+		regions.filter((r) => expandRegionFilter(r.id).some((id) => presentRegions.has(id)))
+	);
 	let sourceOptions = $derived(sources.filter((s) => presentSources.has(s.id)));
 
 	function matchesQuery(task: DownloadTask, needle: string): boolean {
@@ -70,7 +76,13 @@
 	let countable = $derived(
 		$downloads
 			.filter((t) => !platformFilter || t.platform_id === platformFilter)
-			.filter((t) => !regionFilter || (t.region_ids ?? []).includes(regionFilter))
+			// Widened the same way the catalog API widens Browse's ?region=, so
+			// the two filters can't disagree about what "Germany" means.
+			.filter((t) => {
+				if (!regionFilter) return true;
+				const wanted = expandRegionFilter(regionFilter);
+				return (t.region_ids ?? []).some((id) => wanted.includes(id));
+			})
 			.filter((t) => !sourceFilter || t.source_id === sourceFilter)
 			.filter((t) => matchesQuery(t, query))
 	);

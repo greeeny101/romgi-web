@@ -22,7 +22,15 @@ pipeline_path.ensure()
 
 from core import BuildContext, PlatformConfig, Source, load_registry  # noqa: E402
 from grouping import EntryRef, build_groups, load_strategies  # noqa: E402
-from parsers import gametdb, libretro, mame, no_intro, retroachievements, wii_rom_set_by_ghostware  # noqa: E402
+from parsers import (  # noqa: E402
+    gametdb,
+    libretro,
+    mame,
+    no_intro,
+    region_titles,
+    retroachievements,
+    wii_rom_set_by_ghostware,
+)
 from utils.scrape_utils import close_browser  # noqa: E402
 
 from .writer import CatalogWriter  # noqa: E402
@@ -63,6 +71,17 @@ def build_platform_config(entry: dict[str, Any]) -> tuple[str, PlatformConfig]:
         extras=extras,
     )
     return entry["source"], config
+
+
+def title_regions_enabled(config: PlatformConfig) -> bool:
+    """Whether this platform/source lets regions be read off the title.
+
+    A few Internet Archive blocks set no_intro's `parse_title_regions: false`
+    because their filenames' parentheses aren't region tags. That opt-out has
+    to bind the orchestrator-level fallback too, or it just reinstates what
+    the config turned off.
+    """
+    return bool((config.parsers.get("no_intro") or {}).get("parse_title_regions", True))
 
 
 def _tag_links(entries_out: list[dict[str, Any]], source: Source) -> tuple[int, int]:
@@ -115,6 +134,12 @@ def scrape_platform_source(
         if not parser:
             raise LookupError(f"Parser '{parser_name}' not found.")
         entries_out = parser.parse(entries_out, parser_flags)
+
+    # Last resort for anything the parser chain couldn't place: read the region
+    # off the title's parenthesised tag. Catches platforms that run no parser
+    # able to do it at all (fbneo is mame+libretro only) as well as one-off
+    # tags no_intro didn't recognise. Only fills entries still without regions.
+    entries_out = region_titles.apply_fallback(entries_out, enabled=title_regions_enabled(config))
 
     # Runs after the configured parsers so it sees the cleaned title;
     # no-ops for platforms RA doesn't support. See parsers/retroachievements.py.

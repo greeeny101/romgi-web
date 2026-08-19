@@ -52,8 +52,13 @@ class Platform(models.Model):
 
 
 class Region(models.Model):
-    id = models.CharField(primary_key=True, max_length=16)  # 'eu', 'us', 'jp', 'other'
+    # 'us', 'eu', 'de', 'fr', 'au', 'uk', 'jp', 'world', 'other'. Flat rows;
+    # the eu-grouping lives in apps.catalog.regions.
+    id = models.CharField(primary_key=True, max_length=16)
     name = models.CharField(max_length=32)
+
+    class Meta:
+        ordering = ["name"]
 
     def __str__(self) -> str:
         return self.name
