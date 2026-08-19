@@ -32,8 +32,17 @@ class DownloadTaskOut(Schema):
     retry_count: int
     created_at: str
     completed_at: str | None
-
-
-class VerifyResultOut(Schema):
-    exists: bool
-    message: str | None
+    # Whether the staged bytes are still on the server, and when they stop
+    # being. A completed task outlives its file — cleanup_expired_staged_files
+    # enforces STAGED_FILE_RETENTION_HOURS but keeps the row for history — so
+    # "completed" on its own says nothing about whether Save file will work.
+    file_available: bool
+    expires_at: str | None
+    # Size of the staged file as it will actually be saved, which is not
+    # total_bytes: that records what came down the wire, and a CD rip that was
+    # collapsed into a .chd is a fraction of it. None when nothing is staged.
+    file_size: int | None
+    # When the user first pulled the bytes down to their own machine, stamped
+    # by download_file. Distinct from completed_at: that says the server has
+    # the ROM, this says *you* do.
+    first_retrieved_at: str | None
