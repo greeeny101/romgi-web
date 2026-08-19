@@ -14,6 +14,10 @@ def _source_name(source_id: str | None) -> str | None:
 
 
 def _serialize(task) -> dict:
+    # Imported here, not at module scope: downloads.api imports this module for
+    # push_status, so a top-level import would close the cycle.
+    from apps.downloads.api import _staged_size
+
     return {
         "id": task.id,
         "slug": task.slug,
@@ -42,6 +46,15 @@ def _serialize(task) -> dict:
         "retry_count": task.retry_count,
         "created_at": task.created_at.isoformat(),
         "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+        # Mirrors api._out()'s availability pair — see the note there on why
+        # staged_file is the flag. A task that has just completed carries both
+        # already, so the Library list gets its expiry countdown without
+        # waiting for a refetch.
+        "file_available": bool(task.staged_file),
+        "file_size": _staged_size(task),
+        "expires_at": task.expires_at.isoformat() if task.expires_at else None,
+        "first_retrieved_at": task.first_retrieved_at.isoformat() if task.first_retrieved_at else None,
+        "last_retrieved_at": task.last_retrieved_at.isoformat() if task.last_retrieved_at else None,
     }
 
 

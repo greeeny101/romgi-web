@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shutil
 import time
 from urllib.parse import urlparse
 
@@ -38,7 +39,8 @@ from apps.credentials.models import EncryptedCredential
 from apps.credentials.services import internet_archive as ia
 
 from .adapters.registry import registry
-from .extraction import ExtractionError, extract_archive
+from .chd import ChdConversionError, chd_output_path, convert_to_chd, find_disc_sheet
+from .extraction import ExtractionError, extract_archive, payload_files
 from .link_resolver import AUTH_GATED_SCORE, rank_links
 from .models import DownloadTask
 from .playlist import playlist_file_name
@@ -549,7 +551,11 @@ def extract_archive_task(task_id: int, archive_path: str) -> None:
             last_push = now
 
     try:
-        result_path = extract_archive(archive_path, out_dir, on_progress=on_progress)
+        # The returned pick isn't used: it's the largest extracted file, which
+        # is only the right answer for a single-ROM archive — and payload_files
+        # below decides whether that's what this is. It also can't tell a small
+        # ROM shipped beside a large screenshot from the real thing.
+        extract_archive(archive_path, out_dir, on_progress=on_progress)
     except ExtractionError:
         task.status = "failed"
         task.error = "Extraction failed — the archive may be corrupt"
@@ -558,7 +564,74 @@ def extract_archive_task(task_id: int, archive_path: str) -> None:
         dispatch_next_for_user(task.user_id)
         return
 
-    os.remove(archive_path)
+    # Deliberately before the archive is deleted: whether it's still needed is
+    # exactly what's being decided here.
+    sheet = find_disc_sheet(out_dir)
+    if sheet:
+        # A disc is only usable whole, and this endpoint serves one file, so
+        # collapse the set into a single .chd.
+        chd_path = _convert_disc_set(task, sheet, out_dir)
+        if chd_path:
+            os.remove(archive_path)
+            _mark_completed(task, chd_path)
+            return
+        # Conversion failed — fall through and keep the archive, which is still
+        # a complete copy of the disc. Serving one orphaned track wouldn't be.
+    else:
+        payload = payload_files(out_dir)
+        if len(payload) == 1:
+            os.remove(archive_path)
+            _mark_completed(task, payload[0])
+            return
+
+    # Several files that are only usable together and nothing to collapse them
+    # into — an arcade ROM set's chip dumps, a multi-file set with no sheet, a
+    # disc whose conversion failed. Extraction actively hurts here: the endpoint
+    # serves one file, so picking a member would hand over a fragment that no
+    # emulator can load. The archive keeps every member together, under the
+    # exact filenames arcade cores match on.
+    shutil.rmtree(out_dir, ignore_errors=True)
+    _mark_completed(task, archive_path)
+
+
+def _convert_disc_set(task: DownloadTask, sheet: str, out_dir: str) -> str | None:
+    """Collapse the extracted disc set into one .chd, returning its path.
+
+    Returns None if the conversion couldn't be done, in which case the caller
+    keeps the old largest-track behaviour: a partial download the user can see
+    beats a hard failure over bytes that are already on disk.
+    """
+    task.status = "converting"
+    task.progress = 0.0
+    task.save(update_fields=["status", "progress", "updated_at"])
+    push_status(task)
+
+    last_push = 0.0
+
+    def on_progress(fraction: float) -> None:
+        nonlocal last_push
+        now = time.monotonic()
+        task.progress = fraction
+        if now - last_push >= 0.2:
+            push_progress(task)
+            last_push = now
+
+    chd_path = chd_output_path(sheet, task_dir(task.id))
+    try:
+        convert_to_chd(sheet, chd_path, on_progress=on_progress)
+    except ChdConversionError:
+        logger.exception("CHD conversion failed for task %s", task.id)
+        if os.path.exists(chd_path):
+            os.remove(chd_path)
+        return None
+
+    # Only now that the .chd exists and is non-empty — chd.py guarantees both
+    # or raises — are the tracks it was built from safe to drop.
+    shutil.rmtree(out_dir, ignore_errors=True)
+    return chd_path
+
+
+def _mark_completed(task: DownloadTask, result_path: str) -> None:
     task.staged_file = os.path.relpath(result_path, task_dir(task.id))
     task.status = "completed"
     task.completed_at = timezone.now()

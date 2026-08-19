@@ -24,7 +24,7 @@ from ninja_jwt.authentication import JWTAuth
 from apps.catalog.models import CatalogBuild, Entry, EntryGroup, Link, Source
 
 from .models import DownloadTask
-from .schemas import DownloadTaskOut, EnqueueIn, VerifyResultOut
+from .schemas import DownloadTaskOut, EnqueueIn
 from .tasks import dispatch_next_for_user
 
 router = Router(tags=["downloads"], auth=JWTAuth())
@@ -61,6 +61,20 @@ def _discard_existing(user, slug: str) -> None:
         _discard_task(task)
 
 
+def _staged_size(task: DownloadTask) -> int | None:
+    """Bytes of the file the user will actually save. Read off disk rather
+    than stored: total_bytes is what the transfer moved, which stops matching
+    the moment a disc set is collapsed into a .chd (a fraction of the size),
+    and the retention sweep can remove the file at any point."""
+    if not task.staged_file:
+        return None
+    path = os.path.join(django_settings.STAGED_FILES_DIR, str(task.id), task.staged_file)
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return None
+
+
 def _out(task: DownloadTask, sources_by_id: dict[str, str] | None = None) -> DownloadTaskOut:
     source_name = None
     if task.link_source_id:
@@ -93,6 +107,15 @@ def _out(task: DownloadTask, sources_by_id: dict[str, str] | None = None) -> Dow
         retry_count=task.retry_count,
         created_at=task.created_at.isoformat(),
         completed_at=task.completed_at.isoformat() if task.completed_at else None,
+        # staged_file is the authoritative "the bytes are still there" flag:
+        # every path that removes the staged directory blanks it in the same
+        # breath (cleanup_expired_staged_files, and _discard_task drops the
+        # row outright), so it can't point at a directory that's already gone.
+        file_available=bool(task.staged_file),
+        file_size=_staged_size(task),
+        expires_at=task.expires_at.isoformat() if task.expires_at else None,
+        first_retrieved_at=task.first_retrieved_at.isoformat() if task.first_retrieved_at else None,
+        last_retrieved_at=task.last_retrieved_at.isoformat() if task.last_retrieved_at else None,
     )
 
 
@@ -251,32 +274,24 @@ def download_file(request, task_id: int):
 
     path = os.path.join(django_settings.STAGED_FILES_DIR, str(task.id), task.staged_file)
     if not os.path.exists(path):
+        # Blank staged_file so file_available stops advertising bytes that
+        # aren't there. cleanup_expired_staged_files does this for anything it
+        # purges, but it's an hourly beat and can't see a file removed out from
+        # under it, so this is the correction path the removed verify endpoint
+        # used to provide.
+        task.staged_file = ""
+        task.save(update_fields=["staged_file"])
         raise Http404("Staged file no longer available.")
 
+    # last_retrieved_at moves every time; first_retrieved_at is set once and
+    # then left alone, because cleanup_expired_staged_files reads a null there
+    # as "nobody ever claimed this".
+    now = timezone.now()
+    fields = ["last_retrieved_at"]
+    task.last_retrieved_at = now
     if task.first_retrieved_at is None:
-        task.first_retrieved_at = timezone.now()
-        task.save(update_fields=["first_retrieved_at"])
+        task.first_retrieved_at = now
+        fields.append("first_retrieved_at")
+    task.save(update_fields=fields)
 
     return FileResponse(open(path, "rb"), as_attachment=True, filename=os.path.basename(path))
-
-
-@router.post("/{task_id}/verify", response=VerifyResultOut)
-def verify_download(request, task_id: int):
-    """Backs the Library "Downloaded" tab's Verify action — confirms the
-    staged file backing a completed task is still actually present on
-    disk (it may have been purged by cleanup_expired_staged_files, or the
-    retention window may already be tracked but not yet enforced), and
-    corrects task state if it's gone."""
-    task = get_object_or_404(DownloadTask, id=task_id, user=request.user)
-    if task.status != "completed":
-        return VerifyResultOut(exists=False, message="This download never completed.")
-    if not task.staged_file:
-        return VerifyResultOut(exists=False, message="File already removed.")
-
-    path = os.path.join(django_settings.STAGED_FILES_DIR, str(task.id), task.staged_file)
-    if os.path.exists(path):
-        return VerifyResultOut(exists=True, message=None)
-
-    task.staged_file = ""
-    task.save(update_fields=["staged_file"])
-    return VerifyResultOut(exists=False, message="File is no longer available on the server.")

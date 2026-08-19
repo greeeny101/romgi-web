@@ -11,6 +11,7 @@
 	import { downloads } from '$lib/stores/downloads';
 	import PlatformBadge from '$lib/components/platform/PlatformBadge.svelte';
 	import RegionFlags from '$lib/components/region/RegionFlags.svelte';
+	import { formatBytes } from '$lib/format';
 	import { statusColor } from './statusColor';
 
 	let { task }: { task: DownloadTask } = $props();
@@ -35,18 +36,6 @@
 		} finally {
 			saving = false;
 		}
-	}
-
-	function formatBytes(n: number): string {
-		if (!n) return '0 B';
-		const units = ['B', 'KB', 'MB', 'GB'];
-		let value = n;
-		let i = 0;
-		while (value >= 1024 && i < units.length - 1) {
-			value /= 1024;
-			i++;
-		}
-		return `${value.toFixed(1)} ${units[i]}`;
 	}
 </script>
 
@@ -77,7 +66,7 @@
 		<Badge color={statusColor[task.status]}>{task.status}</Badge>
 	</div>
 
-	{#if task.status === 'downloading' || task.status === 'extracting'}
+	{#if task.status === 'downloading' || task.status === 'extracting' || task.status === 'converting'}
 		<div class="h-2 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
 			<div
 				class="h-2 rounded-full bg-primary-600 transition-all"

@@ -31,6 +31,18 @@ RUN uv sync --frozen ${UV_SYNC_ARGS}
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
 RUN /opt/venv/bin/playwright install --with-deps chromium
 
+# chdman, from mame-tools (~15MB). A multi-track CD rip extracts to a .cue plus
+# N .bin tracks, but a download serves exactly one file, so the set is collapsed
+# into a single .chd — see apps/downloads/chd.py.
+#
+# Its own layer, deliberately, rather than folded into the build-essential
+# apt-get above: that one sits before `uv sync` and the chromium download, so
+# touching it would rebuild both of those (several minutes) for the sake of one
+# small package.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends mame-tools \
+    && rm -rf /var/lib/apt/lists/*
+
 # The venv deliberately lives outside /app (UV_PROJECT_ENVIRONMENT above) —
 # docker-compose.yml's dev services bind-mount ./backend over /app at
 # runtime, which would otherwise shadow (and, worse, silently replace with

@@ -75,6 +75,24 @@ credentials were available.
   configured in `production.py` but nothing in the app sends email yet —
   no password reset, no email verification, no notifications. These
   settings exist for future use only.
+- **Choosing a download folder is Chromium-only.** The Library's Downloaded
+  tab can save straight into a folder the user picks once
+  (`frontend/src/lib/downloadTarget.ts`), which needs the File System Access
+  API — Chrome/Edge. Firefox and Safari have no `showDirectoryPicker`, so
+  the picker hides itself there and saving falls back to the blob-URL anchor
+  download into the browser's own download directory. There is no polyfill
+  worth having: the alternative would be a per-file "Save as" dialog, which
+  is what the picker exists to avoid.
+- **No integrity checking of downloaded ROMs.** There is no checksum
+  anywhere — `DownloadTask` and `catalog.Link` have no hash field, and the
+  No-Intro parser reads titles only, not DAT `crc/md5/sha1` attributes. The
+  Library's old "Verify" button implied otherwise but was a bare
+  `os.path.exists()` (removed — see below). The one real integrity check in
+  the pipeline is the `Content-Length` comparison at the end of
+  `http_download`, and even that is skipped when the server sends no
+  `Content-Length`. Note `link_size` can never substitute for it: it comes
+  from a rounded human string ("1.4G"), as the comment on
+  `SIZE_ESTIMATE_TOLERANCE` explains at length.
 
 ## Smoke-tested, not exercised at real scale or duration
 
@@ -110,6 +128,42 @@ credentials were available.
   session, including bringing several up concurrently — but there's been
   no sustained/concurrent load test (ingestion + downloads + torrents +
   credential/metadata calls all happening at once).
+- **CHD conversion of disc downloads.** All 15 affected downloads converted
+  successfully and three were spot-checked with `chdman verify` (raw and
+  overall SHA1 both pass). The four extraction outcomes — disc set → `.chd`,
+  single ROM → the ROM, multi-file set → the archive, ROM-plus-documentation
+  → the ROM rather than the larger image — are covered by a scratch-database
+  run of `extract_archive_task` inside the container. What that does *not*
+  prove: that a converted `.chd` boots in an emulator (never launched one),
+  or that conversion behaves under load. It runs on the `downloads` queue and
+  is CPU-heavy and minutes-long per disc, so several concurrent completions
+  will contend with active transfers. Note also that conversion writes the
+  `.chd` beside the extracted tracks and only deletes them on success, so
+  **peak disk use is roughly the extracted set plus the finished image** —
+  `STAGED_FILES_DIR` needs headroom for that, not just the final file.
+- **CHD is applied to any platform whose archive carries a disc sheet**, not
+  to an allowlist of platforms known to want it. That is a deliberate
+  simplification: a `.cue`/`.gdi`/`.toc` means the content is a CD by
+  definition, and the mainstream CD cores read `.chd` directly. Only
+  confirmed against Dreamcast rips, which is all the live data covers — if a
+  platform's core turns out to want the raw sheet and tracks, this needs a
+  per-platform opt-out alongside `extract_disabled_platforms`.
+- **The reworked Library "Downloaded" tab has not been driven in a browser.**
+  Sorting, the Downloaded/Saved badges, the availability state and the folder
+  picker all pass `svelte-check` and a production build, and their backend
+  fields are verified against a scratch database — but no part of that UI has
+  been clicked. Specifically unproven: that the folder picker's handle
+  survives a page reload (Chrome drops a directory grant when the tab closes,
+  so `ensureFolder` re-prompts — the reprompt path is untested), and that the
+  `Content-Disposition` fix above actually lands a correctly-named file in a
+  real browser.
+- **The `Saved` badge records retrieval, not local presence.** It reads
+  `first_retrieved_at`, stamped server-side when the bytes are pulled, so it
+  says *you have fetched this* rather than *this file is on this machine*.
+  Saving on one computer shows as saved on another, and deleting the file
+  afterwards doesn't clear it. With a chosen save folder the app could check
+  that folder for the file and reflect real presence, which would be
+  accurate but Chromium-only and only once a folder is picked.
 - **Beat-scheduled cadences.** `poll_active_torrents` (3s),
   `dispatch_pending_downloads` (5min), `cleanup_expired_staged_files`
   (hourly), `run_full_ingestion` (weekly, Sun 03:00 UTC), `gc_old_builds`
@@ -185,6 +239,62 @@ happening") led to three real, unrelated bugs:
   (6881, TCP+UDP) — was previously not published at all — though the DNS
   fix turned out to be the actual root cause.
 
+## Fixed while testing what a saved download actually gives you
+
+A user report ("I've downloaded a load of ROMs and can't tell what I've
+saved") turned into three real bugs, all of which made a download *look*
+complete while handing over something unusable.
+
+- **Every saved file lost its extension.** `Virtua Tennis (USA).chd` saved
+  as `Virtua Tennis` — the display title, which carries no extension by
+  design. The server was never at fault: `download_file` sets
+  `Content-Disposition` correctly and it is on the wire. But the SPA and the
+  API are different origins and `Content-Disposition` is not a
+  CORS-safelisted response header, so `res.headers.get()` returned `null` to
+  JavaScript regardless, `apiDownload`'s filename came back `null` on every
+  save, and both callers fell back to `DownloadTask.title`. Fixed with
+  `CORS_EXPOSE_HEADERS = ["Content-Disposition"]`. Worth internalising: a
+  header the browser refuses to reveal is indistinguishable, from the
+  client, from one that was never sent — nothing in the frontend could have
+  detected this.
+- **Multi-file ROM sets were served one member at a time.** A download
+  serves exactly one file, but extraction ended in
+  `extraction._pick_result` — the largest extracted file. Correct for an
+  archive holding a single ROM, silently wrong for anything whose members
+  are only usable together. Two shapes hit this:
+  - *CD rips.* A `.cue` plus N `.bin` tracks came out as the biggest track,
+    orphaning the sheet and every other track. Confirmed live: 15 of the 16
+    extracted downloads were in this state, and the user reported that
+    `.chd` titles played while `.bin` ones did not. Disc sets are now
+    collapsed into a single `.chd` by `chdman` (`apps/downloads/chd.py`,
+    `mame-tools` in the Dockerfile), which is both one file and a fraction
+    of the size — Ready 2 Rumble Boxing went from 1.2GB of loose tracks to
+    376MB.
+  - *Arcade sets.* A zip of numbered chip dumps (`3.bin`, `5.bin`, …) with
+    no sheet, where the emulator wants the zip itself under those exact
+    filenames. Nothing to collapse those into, so the rule is now general:
+    if extraction yields several files that belong together, the archive
+    *is* the deliverable and the extracted copy is discarded. This required
+    deleting the archive *after* that decision rather than before it.
+  - A quieter variant fell out of the same line of code: choosing by size
+    meant a small ROM shipped beside a large screenshot served the
+    **screenshot**.
+    Selection now ignores documentation (`.txt`, `.nfo`, `.jpg`, …), so a
+    readme can't make a single-ROM archive look like a set.
+- **"Verify" did nothing useful and reported nothing.** It was a bare
+  `os.path.exists()` on the staged file — no checksum, no DAT comparison —
+  and the UI dropped its `message` on the floor, so success looked like
+  nothing had happened and failure made the row silently vanish. Removed.
+  The state it was checking is now always visible instead (`file_available`
+  / `expires_at`: "expires in 6h", or "File removed from server" with Save
+  disabled). `download_file` blanks `staged_file` on a 404, which is the
+  self-correction the endpoint used to provide — `cleanup_expired_staged_files`
+  is hourly and can't see a file removed out from under it.
+
+`manage.py convert_disc_downloads` repairs downloads that finished before
+this. Everything was still on disk under `extracted/`, so all 15 converted
+in place with nothing re-downloaded.
+
 ## Fixed while writing this document — worth a second look
 
 Two real gaps surfaced while double-checking the "how do I run this"
@@ -213,6 +323,14 @@ instructions, both now fixed and verified:
   the requested source — verified live: re-running `mariocube` alone
   produced a build with byte-identical entry counts across all four
   sources (226,573 total, unchanged) except mariocube's own fresh scrape.
+- **Arcade downloads taken before the extraction fix must be re-downloaded.**
+  Disc sets were repairable in place because their tracks were still on disk,
+  but an arcade set's archive had already been deleted after extraction, so
+  only one chip dump survives and the zip cannot be reconstructed. One row is
+  in this state in the dev data (`1942 (Revision A, bootleg)`, `fbneo`, still
+  pointing at `extracted/14.bin`). Re-downloading replaces the row in place —
+  `enqueue` discards the previous attempt — so there's nothing to clean up
+  first.
 - `qbittorrent-api` is pinned to `>=2026.8` — an older pin
   (`<2025.0`, the original guess) can't parse a successful login response
   from qBittorrent 5.x, which is what `linuxserver/qbittorrent:latest`

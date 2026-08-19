@@ -9,17 +9,19 @@ export const statusColor: Record<DownloadStatus, StatusColor> = {
 	downloading: 'blue',
 	paused: 'yellow',
 	extracting: 'purple',
+	converting: 'purple',
 	completed: 'green',
 	failed: 'red'
 };
 
-/** Queue order. Pills render all six in this order regardless of which are
+/** Queue order. Pills render all seven in this order regardless of which are
  *  currently present, so the row doesn't reflow as downloads change state. */
 export const statusOrder: DownloadStatus[] = [
 	'pending',
 	'downloading',
 	'paused',
 	'extracting',
+	'converting',
 	'completed',
 	'failed'
 ];
