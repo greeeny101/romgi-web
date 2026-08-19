@@ -93,6 +93,49 @@ def _extract_7z(archive_path: str, output_dir: str, on_progress) -> str:
     return _pick_result(extracted_files, output_dir)
 
 
+# Shipped alongside a ROM rather than being part of it. A readme sitting next
+# to a single ROM must not make the archive look like a multi-file set, or
+# every scene release would be served as its own archive.
+DOCUMENTATION_EXTENSIONS = (
+    ".txt",
+    ".nfo",
+    ".diz",
+    ".md5",
+    ".sfv",
+    ".sha1",
+    ".crc",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".bmp",
+    ".url",
+    ".html",
+    ".htm",
+    ".log",
+)
+
+
+def payload_files(directory: str) -> list[str]:
+    """The extracted files that are plausibly the game itself.
+
+    Callers use the count to decide what to actually serve: exactly one means
+    the archive held a single ROM and that file is the download; more than one
+    means the members are only usable together (an arcade ROM set's chip dumps,
+    a disc's tracks) and the endpoint — which serves one file — has to hand
+    over the archive instead.
+
+    Walks recursively: plenty of archives nest everything one folder deep.
+    """
+    found: list[str] = []
+    for root, _dirs, names in os.walk(directory):
+        for name in names:
+            if name.lower().endswith(DOCUMENTATION_EXTENSIONS):
+                continue
+            found.append(os.path.join(root, name))
+    return sorted(found)
+
+
 def _pick_result(extracted_files: list[str], output_dir: str) -> str:
     """Matches SevenZipServiceImpl's result selection: the single extracted
     file, or the largest one if there were several, or the output dir."""

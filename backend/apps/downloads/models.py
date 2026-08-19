@@ -20,6 +20,9 @@ class DownloadTask(models.Model):
         ("downloading", "downloading"),
         ("paused", "paused"),
         ("extracting", "extracting"),
+        # Collapsing an extracted CD rip into a single .chd — see chd.py for
+        # why a disc set can't be served as-is.
+        ("converting", "converting"),
         ("completed", "completed"),
         ("failed", "failed"),
     ]
