@@ -1,12 +1,25 @@
-"""Ports lib/services/metadata/steamgriddb_provider.dart 1:1. `platform` is
+"""Ports lib/services/metadata/steamgriddb_provider.dart. `platform` is
 accepted (for interface parity with ScreenScraper) but unused — SGDB
-searches by title only, not scoped by platform."""
+searches by title only, not scoped by platform.
+
+One deliberate divergence from the Dart original, which kept only `url`:
+each media item also carries the API's `thumb`, because the web client
+renders these into a small strip rather than a full-screen gallery."""
 
 from urllib.parse import quote
 
 import requests
 
-from .base import CredentialField, MetadataError, MetadataFound, MetadataNoMatch, MetadataProvider, MetadataProviderInfo, MetadataResult
+from .base import (
+    CredentialField,
+    MediaItem,
+    MetadataError,
+    MetadataFound,
+    MetadataNoMatch,
+    MetadataProvider,
+    MetadataProviderInfo,
+    MetadataResult,
+)
 
 BASE_URL = "https://www.steamgriddb.com/api/v2"
 TIMEOUT = (10, 30)
@@ -68,10 +81,10 @@ class SteamGridDbProvider(MetadataProvider):
 
         # Heroes first, then grids, response order preserved — no
         # dimension/score-based selection in the source app.
-        urls = self._media_urls(f"/heroes/game/{game_id}", headers) + self._media_urls(f"/grids/game/{game_id}", headers)
-        return MetadataFound(artwork_urls=urls[:MAX_ARTWORK])
+        media = self._media(f"/heroes/game/{game_id}", headers) + self._media(f"/grids/game/{game_id}", headers)
+        return MetadataFound(artwork=media[:MAX_ARTWORK])
 
-    def _media_urls(self, path: str, headers: dict) -> list[str]:
+    def _media(self, path: str, headers: dict) -> list[MediaItem]:
         try:
             resp = requests.get(f"{BASE_URL}{path}", headers=headers, timeout=TIMEOUT)
             body = resp.json()
@@ -79,4 +92,11 @@ class SteamGridDbProvider(MetadataProvider):
             return []
         if not isinstance(body, dict) or body.get("success") is not True:
             return []
-        return [m["url"] for m in (body.get("data") or []) if isinstance(m, dict) and m.get("url")]
+        # Every grid/hero ships a CDN-scaled `thumb` beside the original
+        # upload; the originals run to megabytes apiece, far past what a
+        # thumbnail strip needs, so `url` is kept only as the link target.
+        return [
+            MediaItem(full=m["url"], thumb=m.get("thumb") or "")
+            for m in (body.get("data") or [])
+            if isinstance(m, dict) and m.get("url")
+        ]

@@ -14,7 +14,7 @@ from django.utils import timezone
 from apps.credentials.models import EncryptedCredential
 
 from .models import GameMetadataCache
-from .providers.base import MetadataError, MetadataFound, MetadataNoMatch
+from .providers.base import MediaItem, MetadataError, MetadataFound, MetadataNoMatch
 from .providers.registry import registry
 
 HIT_TTL = timezone.timedelta(days=14)
@@ -29,6 +29,11 @@ def clean_title(title: str) -> str:
     cleaned = _BRACKET_RE.sub(" ", title)
     cleaned = _WHITESPACE_RE.sub(" ", cleaned)
     return cleaned.strip()
+
+
+def _media_from_cache(values) -> list[MediaItem]:
+    items = (MediaItem.from_cached(v) for v in (values or []))
+    return [item for item in items if item is not None]
 
 
 def _creds_for(user, provider_id: str) -> dict:
@@ -62,13 +67,13 @@ def get_metadata(user, title: str, platform: str) -> MetadataFound | None:
             if cached.data:
                 return MetadataFound(
                     description=cached.data.get("description"),
-                    screenshot_urls=cached.data.get("screenshots") or [],
-                    artwork_urls=cached.data.get("artwork") or [],
+                    screenshots=_media_from_cache(cached.data.get("screenshots")),
+                    artwork=_media_from_cache(cached.data.get("artwork")),
                 )
 
     description = None
-    screenshots: list[str] = []
-    artwork: list[str] = []
+    screenshots: list[MediaItem] = []
+    artwork: list[MediaItem] = []
     any_answered = False
 
     for provider, creds in configured:
@@ -80,8 +85,8 @@ def get_metadata(user, title: str, platform: str) -> MetadataFound | None:
             any_answered = True
             if description is None:
                 description = result.description
-            screenshots.extend(result.screenshot_urls)
-            artwork.extend(result.artwork_urls)
+            screenshots.extend(result.screenshots)
+            artwork.extend(result.artwork)
         elif isinstance(result, MetadataNoMatch):
             any_answered = True
         elif isinstance(result, MetadataError):
@@ -94,7 +99,13 @@ def get_metadata(user, title: str, platform: str) -> MetadataFound | None:
     GameMetadataCache.objects.update_or_create(
         cache_key=cache_key,
         defaults={
-            "data": None if is_empty else {"description": description, "screenshots": screenshots, "artwork": artwork},
+            "data": None
+            if is_empty
+            else {
+                "description": description,
+                "screenshots": [m.as_dict() for m in screenshots],
+                "artwork": [m.as_dict() for m in artwork],
+            },
             "no_match": is_empty,
         },
     )
@@ -104,4 +115,4 @@ def get_metadata(user, title: str, platform: str) -> MetadataFound | None:
 
     if is_empty:
         return None
-    return MetadataFound(description=description, screenshot_urls=screenshots, artwork_urls=artwork)
+    return MetadataFound(description=description, screenshots=screenshots, artwork=artwork)

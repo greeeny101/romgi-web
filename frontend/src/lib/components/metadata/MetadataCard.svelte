@@ -4,7 +4,7 @@
 	let { metadata }: { metadata: GameMetadata } = $props();
 
 	let expanded = $state(false);
-	let media = $derived([...metadata.screenshot_urls, ...metadata.artwork_urls]);
+	let media = $derived([...metadata.screenshots, ...metadata.artwork]);
 	let isLong = $derived((metadata.description?.length ?? 0) > 300);
 </script>
 
@@ -28,9 +28,18 @@
 
 	{#if media.length > 0}
 		<div class="flex gap-2 overflow-x-auto pb-1">
-			{#each media as url (url)}
-				<a href={url} target="_blank" rel="noopener" class="shrink-0">
-					<img src={url} alt="" loading="lazy" class="h-32 w-auto rounded-md object-cover" />
+			{#each media as item (item.full)}
+				<a href={item.full} target="_blank" rel="noopener" class="shrink-0">
+					<!-- Reserving a box keeps the strip from reflowing as each
+					     thumbnail lands, which also lets the browser defer the
+					     ones scrolled off to the right. -->
+					<img
+						src={item.thumb}
+						alt=""
+						loading="lazy"
+						decoding="async"
+						class="h-32 w-48 rounded-md bg-gray-100 object-cover dark:bg-gray-800"
+					/>
 				</a>
 			{/each}
 		</div>
