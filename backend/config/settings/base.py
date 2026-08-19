@@ -105,6 +105,13 @@ MEDIA_ROOT = BASE_DIR / "media"
 # --- CORS -------------------------------------------------------------
 CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[])
 
+# The SPA is served from a different origin than the API, so fetch() can only
+# read CORS-safelisted response headers. Content-Disposition isn't one of them:
+# without this, apiDownload's filename came back null on every save and the
+# client fell back to DownloadTask.title — which is the game name with no
+# extension, so "Virtua Tennis (USA).chd" saved as "Virtua Tennis".
+CORS_EXPOSE_HEADERS = ["Content-Disposition"]
+
 # --- Redis / Celery -----------------------------------------------------
 REDIS_URL = env.str("REDIS_URL", default="redis://localhost:6379/0")
 
