@@ -4,6 +4,7 @@ from ninja.errors import HttpError
 from ninja_jwt.authentication import JWTAuth
 
 from apps.catalog.models import CatalogBuild, Entry, RegionEntry
+from apps.downloads.models import DownloadTask
 
 from .models import Favorite, RecentlyViewed
 from .schemas import FavoriteOut, RecentlyViewedOut
@@ -42,9 +43,32 @@ def _regions_by_slug(slugs: list[str]) -> dict[str, list[str]]:
     return out
 
 
+def _drop_saved(user, favorites: list[Favorite]) -> list[Favorite]:
+    """
+    A title the user has downloaded and saved off the server is no longer
+    something they want — downloads.api.download_file drops it from the
+    wishlist as it hands the file over. This reconciles the same rule on read,
+    so favorites saved before that hook existed (or saved while the delete
+    didn't land) don't linger in the list forever.
+    """
+    saved = set(
+        DownloadTask.objects.filter(
+            user=user,
+            slug__in=[f.slug for f in favorites],
+            last_retrieved_at__isnull=False,
+        ).values_list("slug", flat=True)
+    )
+    if not saved:
+        return favorites
+    Favorite.objects.filter(user=user, slug__in=saved).delete()
+    return [f for f in favorites if f.slug not in saved]
+
+
 @router.get("/favorites", response=list[FavoriteOut])
 def list_favorites(request):
-    favorites = list(Favorite.objects.filter(user=request.user).select_related("platform"))
+    favorites = _drop_saved(
+        request.user, list(Favorite.objects.filter(user=request.user).select_related("platform"))
+    )
     regions = _regions_by_slug([f.slug for f in favorites])
     return [
         FavoriteOut(

@@ -9,6 +9,7 @@
 	} from 'flowbite-svelte-icons';
 	import { downloadsApi, type DownloadTask } from '$lib/api/downloads';
 	import { downloads } from '$lib/stores/downloads';
+	import { favorites } from '$lib/stores/favorites';
 	import PlatformBadge from '$lib/components/platform/PlatformBadge.svelte';
 	import RegionFlags from '$lib/components/region/RegionFlags.svelte';
 	import { formatBytes } from '$lib/format';
@@ -31,6 +32,10 @@
 			a.click();
 			a.remove();
 			URL.revokeObjectURL(url);
+			// Saving the file drops the title from the wishlist server-side;
+			// keep the store in step so the Library tab and the favorite
+			// buttons don't keep offering a ROM you've already got.
+			favorites.drop(task.slug);
 		} catch (err) {
 			console.error('Failed to download file', err);
 		} finally {

@@ -22,6 +22,7 @@ from ninja.errors import HttpError
 from ninja_jwt.authentication import JWTAuth
 
 from apps.catalog.models import CatalogBuild, Entry, EntryGroup, Link, Source
+from apps.library.models import Favorite
 
 from .models import DownloadTask
 from .schemas import DownloadTaskOut, EnqueueIn
@@ -293,5 +294,13 @@ def download_file(request, task_id: int):
         task.first_retrieved_at = now
         fields.append("first_retrieved_at")
     task.save(update_fields=fields)
+
+    # A wishlist is a list of things you still want, so downloading a title and
+    # saving the file off the server is exactly the point at which it stops
+    # belonging there. Keyed by slug, not task id, because Favorite snapshots a
+    # slug rather than FK'ing the entry (see library.models). Unconditional
+    # rather than only on the first save: re-favoriting a title you already have
+    # and saving it again means the same thing.
+    Favorite.objects.filter(user=request.user, slug=task.slug).delete()
 
     return FileResponse(open(path, "rb"), as_attachment=True, filename=os.path.basename(path))
