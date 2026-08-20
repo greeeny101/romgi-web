@@ -103,6 +103,10 @@
 					? { ...t, last_retrieved_at: savedAt, first_retrieved_at: t.first_retrieved_at ?? savedAt }
 					: t
 			);
+			downloads.patch(task.id, {
+				last_retrieved_at: savedAt,
+				first_retrieved_at: task.first_retrieved_at ?? savedAt
+			});
 		} catch (err) {
 			// The retention sweep is an hourly beat and can't see a file removed
 			// out from under it, so file_available can claim bytes that are
@@ -112,6 +116,7 @@
 				downloaded = downloaded.map((t) =>
 					t.id === task.id ? { ...t, file_available: false } : t
 				);
+				downloads.patch(task.id, { file_available: false });
 			}
 			// Inline, not the page-level `error` — that swaps the whole list out
 			// for an ErrorView, and one failed save shouldn't cost you the list.
