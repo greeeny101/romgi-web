@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { Checkbox, Spinner } from 'flowbite-svelte';
 	import { TrashBinOutline, FolderOpenOutline } from 'flowbite-svelte-icons';
+	import { page as appPage } from '$app/state';
+	import { replaceState } from '$app/navigation';
 	import { catalogApi, type Platform } from '$lib/api/catalog';
 	import { libraryApi, type RecentlyViewedEntry } from '$lib/api/library';
 	import { downloadsApi, type DownloadTask } from '$lib/api/downloads';
@@ -15,6 +17,8 @@
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ErrorView from '$lib/components/common/ErrorView.svelte';
 	import { formatBytes, formatExpiry } from '$lib/format';
+	import { entryReturn } from '$lib/stores/entryReturn';
+	import { restoreEntryFocus } from '$lib/entryFocus';
 	import {
 		anchorDownload,
 		chooseFolder,
@@ -25,7 +29,20 @@
 		saveToFolder
 	} from '$lib/downloadTarget';
 
-	let tab = $state<'wishlist' | 'recent' | 'downloaded'>('wishlist');
+	type Tab = 'wishlist' | 'recent' | 'downloaded';
+	const TABS: Tab[] = ['wishlist', 'recent', 'downloaded'];
+
+	// The tab lives in the URL, same as Browse's filters, so that leaving for an
+	// entry and coming back — via the back button, the entry page's back link,
+	// or a reload — reopens the tab you were on rather than the default.
+	const initialTab = appPage.url.searchParams.get('tab') as Tab | null;
+	let tab = $state<Tab>(initialTab && TABS.includes(initialTab) ? initialTab : 'wishlist');
+
+	// The entry the user opened last, to be scrolled back into view once this
+	// tab's list has loaded. Read at init so it is claimed before any effect.
+	let pendingFocusSlug: string | null = entryReturn.takeFocus('/library');
+	let highlightedSlug = $state<string | null>(null);
+
 	let recentlyViewed = $state<RecentlyViewedEntry[]>([]);
 	let downloaded = $state<DownloadTask[]>([]);
 	let platforms = $state<Platform[]>([]);
@@ -69,6 +86,16 @@
 		} finally {
 			loading = false;
 		}
+		await restoreFocus();
+	}
+
+	// Bring the entry the user came back from into view, once, now that the
+	// grid it sits in has data to render.
+	async function restoreFocus() {
+		if (!pendingFocusSlug) return;
+		const slug = pendingFocusSlug;
+		pendingFocusSlug = null;
+		await restoreEntryFocus(slug, (s) => (highlightedSlug = s));
 	}
 
 	async function pickFolder() {
@@ -148,6 +175,15 @@
 
 	$effect(() => {
 		load();
+	});
+
+	// Mirror the tab into the URL, and record it as where an entry opened from
+	// here should come back to. replaceState, not goto — flicking between tabs
+	// must not pile up history entries.
+	$effect(() => {
+		const search = tab === 'wishlist' ? '' : `?tab=${tab}`;
+		if (search !== appPage.url.search) replaceState(`/library${search}`, {});
+		entryReturn.rememberOrigin(`/library${search}`, 'Library');
 	});
 
 	// Restore a previously chosen folder just to label the toolbar. No
@@ -259,6 +295,8 @@
 						platformName={platformName(item.platform_id)}
 						platformBrand={platformBrand(item.platform_id)}
 						href={`/entry/${item.slug}`}
+						id={`entry-${item.slug}`}
+						highlighted={highlightedSlug === item.slug}
 					/>
 				{/each}
 			</div>
@@ -281,6 +319,8 @@
 						platformName={platformName(item.platform_id)}
 						platformBrand={platformBrand(item.platform_id)}
 						href={`/entry/${item.slug}`}
+						id={`entry-${item.slug}`}
+						highlighted={highlightedSlug === item.slug}
 					/>
 				{/each}
 			</div>

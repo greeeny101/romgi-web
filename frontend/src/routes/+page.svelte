@@ -1,12 +1,12 @@
 <script lang="ts">
-	import { tick } from 'svelte';
 	import { page as appPage } from '$app/state';
 	import { replaceState } from '$app/navigation';
 	import { Spinner, Button } from 'flowbite-svelte';
 	import { GridOutline, ListOutline } from 'flowbite-svelte-icons';
 	import { catalogApi, type Platform, type Region, type Source, type PaginatedEntries } from '$lib/api/catalog';
 	import { ApiError } from '$lib/api/client';
-	import { browseState } from '$lib/stores/browseState';
+	import { entryReturn } from '$lib/stores/entryReturn';
+	import { restoreEntryFocus } from '$lib/entryFocus';
 	import RomGridCard from '$lib/components/rom/RomGridCard.svelte';
 	import RomListTile from '$lib/components/rom/RomListTile.svelte';
 	import FilterBar from '$lib/components/filters/FilterBar.svelte';
@@ -39,7 +39,7 @@
 
 	// The entry the user opened last, to be scrolled back into view once the
 	// first result set lands. Read at init so it is claimed before any effect.
-	let pendingFocusSlug: string | null = browseState.takeFocus();
+	let pendingFocusSlug: string | null = entryReturn.takeFocus('/');
 	let highlightedSlug = $state<string | null>(null);
 
 	let result = $state<PaginatedEntries | null>(null);
@@ -81,22 +81,12 @@
 		await restoreFocus();
 	}
 
-	// Bring the entry the user came back from into view, once, after its card
-	// has actually rendered.
+	// Bring the entry the user came back from into view, once.
 	async function restoreFocus() {
 		if (!pendingFocusSlug) return;
 		const slug = pendingFocusSlug;
 		pendingFocusSlug = null;
-		await tick();
-		const card = document.getElementById(`entry-${slug}`);
-		if (!card) return;
-		// Instant, not smooth — smooth scrolling fights SvelteKit's own scroll
-		// restoration when arriving via the back button.
-		card.scrollIntoView({ block: 'center' });
-		highlightedSlug = slug;
-		setTimeout(() => {
-			if (highlightedSlug === slug) highlightedSlug = null;
-		}, 2000);
+		await restoreEntryFocus(slug, (s) => (highlightedSlug = s));
 	}
 
 	function platformName(id: string): string {
@@ -140,7 +130,7 @@
 		const qs = params.toString();
 		const search = qs ? `?${qs}` : '';
 		if (search !== appPage.url.search) replaceState(`/${search}`, {});
-		browseState.rememberSearch(search);
+		entryReturn.rememberOrigin(`/${search}`, 'Browse');
 	});
 
 	$effect(() => {
