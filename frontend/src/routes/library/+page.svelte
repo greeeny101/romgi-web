@@ -1,6 +1,8 @@
 <script lang="ts">
-	import { Spinner } from 'flowbite-svelte';
+	import { Checkbox, Spinner } from 'flowbite-svelte';
 	import { TrashBinOutline, FolderOpenOutline } from 'flowbite-svelte-icons';
+	import { page as appPage } from '$app/state';
+	import { replaceState } from '$app/navigation';
 	import { catalogApi, type Platform } from '$lib/api/catalog';
 	import { libraryApi, type RecentlyViewedEntry } from '$lib/api/library';
 	import { downloadsApi, type DownloadTask } from '$lib/api/downloads';
@@ -15,6 +17,8 @@
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ErrorView from '$lib/components/common/ErrorView.svelte';
 	import { formatBytes, formatExpiry } from '$lib/format';
+	import { entryReturn } from '$lib/stores/entryReturn';
+	import { restoreEntryFocus } from '$lib/entryFocus';
 	import {
 		anchorDownload,
 		chooseFolder,
@@ -25,7 +29,20 @@
 		saveToFolder
 	} from '$lib/downloadTarget';
 
-	let tab = $state<'wishlist' | 'recent' | 'downloaded'>('wishlist');
+	type Tab = 'wishlist' | 'recent' | 'downloaded';
+	const TABS: Tab[] = ['wishlist', 'recent', 'downloaded'];
+
+	// The tab lives in the URL, same as Browse's filters, so that leaving for an
+	// entry and coming back — via the back button, the entry page's back link,
+	// or a reload — reopens the tab you were on rather than the default.
+	const initialTab = appPage.url.searchParams.get('tab') as Tab | null;
+	let tab = $state<Tab>(initialTab && TABS.includes(initialTab) ? initialTab : 'wishlist');
+
+	// The entry the user opened last, to be scrolled back into view once this
+	// tab's list has loaded. Read at init so it is claimed before any effect.
+	let pendingFocusSlug: string | null = entryReturn.takeFocus('/library');
+	let highlightedSlug = $state<string | null>(null);
+
 	let recentlyViewed = $state<RecentlyViewedEntry[]>([]);
 	let downloaded = $state<DownloadTask[]>([]);
 	let platforms = $state<Platform[]>([]);
@@ -46,6 +63,11 @@
 	let sortKey = $state('platform');
 	let sortDir = $state<SortDirection>('asc');
 
+	// On by default: a task whose staged file the server has swept can't be
+	// saved any more, so it's dead weight in a list you're working down. The
+	// rows aren't deleted, just hidden — unticking brings them back.
+	let hideRemoved = $state(true);
+
 	let folder = $state<FileSystemDirectoryHandle | null>(null);
 	const folderPickerSupported = isFolderPickerSupported();
 
@@ -64,6 +86,16 @@
 		} finally {
 			loading = false;
 		}
+		await restoreFocus();
+	}
+
+	// Bring the entry the user came back from into view, once, now that the
+	// grid it sits in has data to render.
+	async function restoreFocus() {
+		if (!pendingFocusSlug) return;
+		const slug = pendingFocusSlug;
+		pendingFocusSlug = null;
+		await restoreEntryFocus(slug, (s) => (highlightedSlug = s));
 	}
 
 	async function pickFolder() {
@@ -103,6 +135,10 @@
 					? { ...t, last_retrieved_at: savedAt, first_retrieved_at: t.first_retrieved_at ?? savedAt }
 					: t
 			);
+			downloads.patch(task.id, {
+				last_retrieved_at: savedAt,
+				first_retrieved_at: task.first_retrieved_at ?? savedAt
+			});
 		} catch (err) {
 			// The retention sweep is an hourly beat and can't see a file removed
 			// out from under it, so file_available can claim bytes that are
@@ -112,6 +148,7 @@
 				downloaded = downloaded.map((t) =>
 					t.id === task.id ? { ...t, file_available: false } : t
 				);
+				downloads.patch(task.id, { file_available: false });
 			}
 			// Inline, not the page-level `error` — that swaps the whole list out
 			// for an ErrorView, and one failed save shouldn't cost you the list.
@@ -138,6 +175,15 @@
 
 	$effect(() => {
 		load();
+	});
+
+	// Mirror the tab into the URL, and record it as where an entry opened from
+	// here should come back to. replaceState, not goto — flicking between tabs
+	// must not pile up history entries.
+	$effect(() => {
+		const search = tab === 'wishlist' ? '' : `?tab=${tab}`;
+		if (search !== appPage.url.search) replaceState(`/library${search}`, {});
+		entryReturn.rememberOrigin(`/library${search}`, 'Library');
 	});
 
 	// Restore a previously chosen folder just to label the toolbar. No
@@ -183,8 +229,12 @@
 		}
 	}
 
+	let removedCount = $derived(downloaded.filter((t) => !t.file_available).length);
+
 	let sortedDownloads = $derived(
-		[...downloaded].sort((a, b) => (sortDir === 'asc' ? compare(a, b) : -compare(a, b)))
+		downloaded
+			.filter((t) => t.file_available || !hideRemoved)
+			.sort((a, b) => (sortDir === 'asc' ? compare(a, b) : -compare(a, b)))
 	);
 </script>
 
@@ -245,6 +295,8 @@
 						platformName={platformName(item.platform_id)}
 						platformBrand={platformBrand(item.platform_id)}
 						href={`/entry/${item.slug}`}
+						id={`entry-${item.slug}`}
+						highlighted={highlightedSlug === item.slug}
 					/>
 				{/each}
 			</div>
@@ -267,6 +319,8 @@
 						platformName={platformName(item.platform_id)}
 						platformBrand={platformBrand(item.platform_id)}
 						href={`/entry/${item.slug}`}
+						id={`entry-${item.slug}`}
+						highlighted={highlightedSlug === item.slug}
 					/>
 				{/each}
 			</div>
@@ -276,7 +330,18 @@
 	{:else}
 		<div class="flex flex-col gap-3">
 			<div class="flex flex-wrap items-center justify-between gap-3">
-				<SortSelect options={sortOptions} bind:key={sortKey} bind:direction={sortDir} />
+				<div class="flex flex-wrap items-center gap-3">
+					<SortSelect options={sortOptions} bind:key={sortKey} bind:direction={sortDir} />
+
+					<!-- classes.div, not class: `class` lands on the <input>, where a
+					     text-gray would twMerge away the primary tick colour. -->
+					<Checkbox
+						bind:checked={hideRemoved}
+						classes={{ div: 'text-xs text-gray-500 dark:text-gray-400' }}
+					>
+						Hide files removed from the server{removedCount > 0 ? ` (${removedCount})` : ''}
+					</Checkbox>
+				</div>
 
 				{#if folderPickerSupported}
 					<div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
@@ -306,6 +371,13 @@
 
 			{#if saveError}
 				<p class="text-xs text-red-600 dark:text-red-400">{saveError}</p>
+			{/if}
+
+			{#if sortedDownloads.length === 0}
+				<p class="py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+					All {removedCount} downloaded {removedCount === 1 ? 'item' : 'items'} have been removed from
+					the server. Untick "Hide files removed from the server" to see them.
+				</p>
 			{/if}
 
 			{#each sortedDownloads as task (task.id)}

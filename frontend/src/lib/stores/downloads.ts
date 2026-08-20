@@ -16,6 +16,14 @@ function createDownloadsStore() {
 		});
 	}
 
+	// The Library keeps its own copy of the list, but the badges on Browse read
+	// this store — mirror the changes it makes locally (a save, a file found
+	// missing) into both, or a tile keeps showing the old state until the next
+	// load().
+	function patch(id: number, changes: Partial<DownloadTask>) {
+		update((tasks) => tasks.map((t) => (t.id === id ? { ...t, ...changes } : t)));
+	}
+
 	function remove(id: number) {
 		update((tasks) => tasks.filter((t) => t.id !== id));
 	}
@@ -69,7 +77,7 @@ function createDownloadsStore() {
 		remove(id);
 	}
 
-	return { subscribe, start, stop, load, enqueue, pause, resume, retry, cancel };
+	return { subscribe, start, stop, load, patch, enqueue, pause, resume, retry, cancel };
 }
 
 export const downloads = createDownloadsStore();
