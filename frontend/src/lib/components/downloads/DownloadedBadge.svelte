@@ -1,5 +1,10 @@
 <script lang="ts">
-	import { DownloadSolid, ExclamationCircleSolid, FloppyDiskSolid } from 'flowbite-svelte-icons';
+	import {
+		CloseCircleSolid,
+		DownloadSolid,
+		ExclamationCircleSolid,
+		FloppyDiskSolid
+	} from 'flowbite-svelte-icons';
 	import { downloads } from '$lib/stores/downloads';
 	import type { DownloadStatus, DownloadTask } from '$lib/api/downloads';
 	import { formatDateTime } from '$lib/format';
@@ -10,8 +15,9 @@
 	//
 	// The slug path shows the whole life of a download in one 16px slot —
 	// in-flight ring, then the green arrow, then a warning once the staged file
-	// expires unsaved. The completedAt path is the Library's pill and only ever
-	// means "finished"; the Library says the rest in words next to it.
+	// expires unsaved, or a red cross if the transfer never made it. The
+	// completedAt path is the Library's pill and only ever means "finished";
+	// the Library says the rest in words next to it.
 	let {
 		slug,
 		platformId,
@@ -48,9 +54,9 @@
 	//
 	// enqueue keeps one task per slug, but a retry or a group enqueue can leave
 	// more than one in the list briefly, so pick deliberately: whatever is
-	// happening now outranks whatever happened last. `failed` is picked up by
-	// nobody — a failure belongs on the downloads queue, not as a badge on a
-	// browse tile the user hasn't asked about.
+	// happening now outranks whatever happened last, and a download that did
+	// land outranks one that didn't — a slug with both a completed task and a
+	// failed one is a slug the user has the bytes for.
 	let matched = $derived.by((): DownloadTask | null => {
 		if (!slug) return null;
 		const mine = $downloads.filter((t) => t.slug === slug && t.platform_id === platformId);
@@ -58,6 +64,7 @@
 			mine.find((t) => ACTIVE.includes(t.status)) ??
 			mine.find((t) => t.status === 'paused') ??
 			mine.find((t) => t.status === 'completed') ??
+			mine.find((t) => t.status === 'failed') ??
 			null
 		);
 	});
@@ -92,6 +99,7 @@
 		if (ACTIVE.includes(matched.status)) return 'active';
 		if (matched.status === 'paused') return 'paused';
 		if (matched.status === 'completed') return expired ? 'expired' : 'downloaded';
+		if (matched.status === 'failed') return 'failed';
 		return 'none';
 	});
 
@@ -114,6 +122,12 @@
 
 	const expiredTitle =
 		'This download expired before you saved it — download it again to get the file';
+	// The task's `error` is the backend's own message and can be a stack-trace
+	// tail, so it's a tooltip rather than anything the tile lays out; the
+	// downloads queue is where the user goes to read it and retry.
+	let failedTitle = $derived(
+		matched?.error ? `Download failed — ${matched.error}` : 'Download failed — try again'
+	);
 	let savedTitle = $derived(`You saved this file on ${savedAt ? formatDateTime(savedAt) : ''}`);
 </script>
 
@@ -131,8 +145,9 @@
 		</span>
 	{/if}
 {:else}
-	<!-- One slot, four states: the ring, the green arrow, or the warning all
-	     land in the same place so the row doesn't reflow as a download runs. -->
+	<!-- One slot, every state: the ring, the green arrow, the expiry warning
+	     and the failure cross all land in the same place so the row doesn't
+	     reflow as a download runs. -->
 	{#if state === 'active' || state === 'paused'}
 		<span
 			class="flex items-center justify-center rounded-full bg-white/80 p-1.5 shadow dark:bg-gray-800/80"
@@ -178,6 +193,15 @@
 			aria-label={expiredTitle}
 		>
 			<ExclamationCircleSolid class="{dimension} text-amber-500 dark:text-amber-400" />
+		</span>
+	{:else if state === 'failed'}
+		<span
+			class="flex items-center justify-center rounded-full bg-white/80 p-1.5 shadow dark:bg-gray-800/80"
+			title={failedTitle}
+			role="img"
+			aria-label={failedTitle}
+		>
+			<CloseCircleSolid class="{dimension} text-red-600 dark:text-red-400" />
 		</span>
 	{:else if state === 'downloaded'}
 		<span
