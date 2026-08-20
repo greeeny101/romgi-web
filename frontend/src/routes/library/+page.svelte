@@ -139,6 +139,11 @@
 				last_retrieved_at: savedAt,
 				first_retrieved_at: task.first_retrieved_at ?? savedAt
 			});
+
+			// The GET dropped it from the wishlist too — a ROM you've saved isn't
+			// something you still want. Mirror that so the Wishlist tab and the
+			// favorite buttons agree without a reload.
+			favorites.drop(task.slug);
 		} catch (err) {
 			// The retention sweep is an hourly beat and can't see a file removed
 			// out from under it, so file_available can claim bytes that are

@@ -28,6 +28,16 @@ function createFavoritesStore() {
 				update((map) => new Map(map).set(slug, favorite));
 			}
 		},
+		// The server drops a favorite as it hands over the saved file, so the
+		// wishlist would otherwise keep showing it until the next load().
+		drop(slug: string) {
+			update((map) => {
+				if (!map.has(slug)) return map;
+				const next = new Map(map);
+				next.delete(slug);
+				return next;
+			});
+		},
 		clear() {
 			set(new Map());
 		}
