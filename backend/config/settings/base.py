@@ -268,6 +268,20 @@ CATALOG_BUILD_STALE_AFTER_HOURS = env.int("CATALOG_BUILD_STALE_AFTER_HOURS", def
 RETROACHIEVEMENTS_API_USER = env.str("RA_API_USER", default="")
 RETROACHIEVEMENTS_API_KEY = env.str("RA_API_KEY", default="")
 
+# ScreenScraper's api2 authenticates on a *developer* account registered per
+# application, not on the end user's — see apps/metadata/providers/screenscraper.py.
+# One romgi-wide pair lives here rather than in each user's credential vault
+# (Batocera compiles its own into EmulationStation; RomM bakes its into the
+# Docker image) so users only ever supply their own account, which exists
+# solely to lift the anonymous quota and thread limit. Blank until
+# ScreenScraper issues us keys — the provider reports that as an operator
+# problem rather than pretending the user typed a bad password.
+SCREENSCRAPER_DEV_ID = env.str("SCREENSCRAPER_DEV_ID", default="")
+SCREENSCRAPER_DEV_PASSWORD = env.str("SCREENSCRAPER_DEV_PASSWORD", default="")
+# Configurable because ScreenScraper ties softname to the registered dev
+# account — it has to match whatever name they issue the keys under.
+SCREENSCRAPER_SOFTNAME = env.str("SCREENSCRAPER_SOFTNAME", default="romgi")
+
 # The NoPayStation scraper (apps/ingestion/pipeline/sources/nopaystation)
 # generates RAP/ZRIF key files at ingestion time and needs somewhere to
 # write them and a URL those files are actually served from — see

@@ -3,10 +3,13 @@
 
 	// Field lists come from the backend now (GET /credentials/{kind}/{id}) so
 	// they can't disagree with what each provider actually requires.
+	// The developer credentials ScreenScraper's API authenticates on belong to
+	// this romgi server, not to you — they're set once by whoever runs it. A
+	// personal account is separate and only affects your quota.
 	const screenScraperHint =
-		"ScreenScraper's API authenticates on a developer ID and password — a personal " +
-		'account alone will not connect. Request developer access on the ScreenScraper ' +
-		'forum, then add your own account below to raise the request quota.';
+		'Your own free ScreenScraper account. It is not what authenticates the API — ' +
+		'that is a developer credential the server administrator configures — so this ' +
+		'only raises the request quota and thread limit used when scraping for you.';
 </script>
 
 <svelte:head>
