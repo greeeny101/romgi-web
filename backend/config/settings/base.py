@@ -278,9 +278,11 @@ RETROACHIEVEMENTS_API_KEY = env.str("RA_API_KEY", default="")
 # problem rather than pretending the user typed a bad password.
 SCREENSCRAPER_DEV_ID = env.str("SCREENSCRAPER_DEV_ID", default="")
 SCREENSCRAPER_DEV_PASSWORD = env.str("SCREENSCRAPER_DEV_PASSWORD", default="")
-# Configurable because ScreenScraper ties softname to the registered dev
-# account — it has to match whatever name they issue the keys under.
-SCREENSCRAPER_SOFTNAME = env.str("SCREENSCRAPER_SOFTNAME", default="romgi")
+# The application name ScreenScraper attributes our API traffic to, declared
+# when requesting the developer keys and registered against them — it has to
+# match whatever name they issue under. ".web" separates this from the
+# Android app it was ported from, which is a distinct client to them.
+SCREENSCRAPER_SOFTNAME = env.str("SCREENSCRAPER_SOFTNAME", default="romgi.web")
 
 # The NoPayStation scraper (apps/ingestion/pipeline/sources/nopaystation)
 # generates RAP/ZRIF key files at ingestion time and needs somewhere to
