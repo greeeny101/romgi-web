@@ -48,6 +48,18 @@
 
 	const PAGE_SIZE = 40;
 
+	// The search box filters as you type and a one-letter query matches tens of
+	// thousands of rows, so firing on every keystroke both floods the API and
+	// makes the list jump around. Long enough to swallow a typing burst, short
+	// enough that a pause feels immediate.
+	const SEARCH_DEBOUNCE_MS = 250;
+
+	// Responses can land out of order — a slow one-letter query finishing after
+	// the narrower query that replaced it would put the wrong results on screen.
+	// Only the newest request is allowed to write to `result`.
+	let latestRequest = 0;
+	let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+
 	async function loadLookups() {
 		try {
 			[platforms, regions, sources] = await Promise.all([
@@ -61,10 +73,11 @@
 	}
 
 	async function loadEntries() {
+		const request = ++latestRequest;
 		loading = true;
 		error = null;
 		try {
-			result = await catalogApi.entries({
+			const page_result = await catalogApi.entries({
 				q: query || undefined,
 				platform: platformFilter || undefined,
 				region: regionFilter || undefined,
@@ -72,11 +85,16 @@
 				page,
 				page_size: PAGE_SIZE
 			});
+			if (request !== latestRequest) return;
+			result = page_result;
 		} catch (err) {
+			if (request !== latestRequest) return;
 			error = err instanceof ApiError ? err.message : 'Failed to load the catalog.';
 			result = null;
 		} finally {
-			loading = false;
+			// The spinner belongs to the newest request; an overtaken one
+			// clearing it would flash the list back mid-type.
+			if (request === latestRequest) loading = false;
 		}
 		await restoreFocus();
 	}
@@ -139,7 +157,9 @@
 		void regionFilter;
 		void sourceFilter;
 		void page;
-		loadEntries();
+		clearTimeout(debounceTimer);
+		debounceTimer = setTimeout(loadEntries, SEARCH_DEBOUNCE_MS);
+		return () => clearTimeout(debounceTimer);
 	});
 
 	$effect(() => {
