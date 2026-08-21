@@ -5,8 +5,10 @@ writes design. No auth required yet: full JWT gating + settings-aware link
 ranking (LinkResolver) land with the `downloads` app in Phase 3.
 """
 
-from django.contrib.postgres.search import SearchQuery, SearchRank
-from django.db.models import Q
+import re
+
+from django.contrib.postgres.search import SearchQuery
+from django.db.models import Case, IntegerField, Value, When
 from django.shortcuts import get_object_or_404
 from ninja import Query, Router
 
@@ -26,6 +28,39 @@ from .schemas import (
 )
 
 router = Router(tags=["catalog"])
+
+# The search vector is built with the 'simple' config — no stemming, no stop
+# words (see writer.refresh_search_vectors). Queries have to name the same
+# config or the lexemes never line up: 'english' would stem the query token
+# but the stored vector wouldn't be stemmed to match.
+SEARCH_CONFIG = "simple"
+
+# Anything that isn't a word character is a separator, which is how the
+# 'simple' parser splits titles too — so the tokens here are the same tokens
+# that ended up in the vector. Unicode-aware: "Pokémon" is one token.
+_TOKEN_RE = re.compile(r"\w+", re.UNICODE)
+
+
+def _search_query(q: str) -> SearchQuery | None:
+    """Turn what the user has typed so far into a prefix tsquery.
+
+    The search box filters as you type, so a query is nearly always a
+    half-typed word: "c", "cra", "crazy ta". Plain full-text matching is
+    whole-lexeme, so "c" matched only titles containing a standalone "c"
+    (a "(Rev C)" tag) and missed "Crazy Taxi" entirely. Every token gets
+    `:*` instead, so each one matches as a prefix and the result set only
+    ever narrows as more letters arrive.
+
+    Returns None when the input has no word characters at all ("---"):
+    to_tsquery would yield an empty tsquery, which matches every row.
+    """
+    tokens = _TOKEN_RE.findall(q.lower())
+    if not tokens:
+        return None
+    # Quoted so a token can't be read as tsquery syntax. \w+ can't contain a
+    # single quote, so the quoting can't be broken out of.
+    raw = " & ".join(f"'{t}':*" for t in tokens)
+    return SearchQuery(raw, search_type="raw", config=SEARCH_CONFIG)
 
 
 def _active_entries():
@@ -78,10 +113,25 @@ def list_entries(
     qs = _active_entries().select_related("platform").prefetch_related("regions")
 
     if q:
-        query = SearchQuery(q, search_type="websearch")
-        qs = qs.filter(search_vector=query).annotate(rank=SearchRank("search_vector", query)).order_by("-rank")
+        query = _search_query(q)
+        if query is None:
+            qs = qs.filter(title__icontains=q)
+        else:
+            qs = qs.filter(search_vector=query)
+        # Titles that *start* with what was typed first, then alphabetical.
+        # Deliberately not ts_rank: every prefix hit scores about the same, so
+        # ranking them shuffled equal-scoring rows between pages. Ordering ends
+        # on `id` for the same reason — a stable order is what makes paging
+        # through a result set trustworthy.
+        qs = qs.annotate(
+            starts_with=Case(
+                When(title__istartswith=q.strip(), then=Value(0)),
+                default=Value(1),
+                output_field=IntegerField(),
+            )
+        ).order_by("starts_with", "title", "id")
     else:
-        qs = qs.order_by("title")
+        qs = qs.order_by("title", "id")
 
     if platform:
         qs = qs.filter(platform_id=platform)

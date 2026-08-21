@@ -243,5 +243,15 @@ class CatalogWriter:
 
     def refresh_search_vectors(self) -> None:
         """Bulk-populate Postgres FTS — the equivalent of the SQLite
-        entries_fts shadow table, done once at the end rather than per-row."""
-        Entry.objects.filter(build=self.build).update(search_vector=SearchVector("title"))
+        entries_fts shadow table, done once at the end rather than per-row.
+
+        'simple', not the default 'english': game titles are proper nouns, so
+        stemming buys nothing and costs a lot. It also lets the catalog API
+        match on prefixes as the user types (see catalog.api._search_query) —
+        stemmed lexemes can't be prefix-matched reliably, because a
+        half-typed word stems to something that isn't a prefix of the stored
+        stem. Stop words matter too: 'english' drops them, which would make
+        "The Simpsons" unfindable by "the"."""
+        Entry.objects.filter(build=self.build).update(
+            search_vector=SearchVector("title", config="simple")
+        )

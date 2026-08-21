@@ -68,6 +68,11 @@
 	// rows aren't deleted, just hidden — unticking brings them back.
 	let hideRemoved = $state(true);
 
+	// Off by default: the tab's job is to show everything you've downloaded.
+	// Ticking this narrows it to the pile you still have work to do on — the
+	// same "not yet on my machine" split the Saved locally sort orders by.
+	let onlyUnsaved = $state(false);
+
 	let folder = $state<FileSystemDirectoryHandle | null>(null);
 	const folderPickerSupported = isFolderPickerSupported();
 
@@ -236,10 +241,25 @@
 
 	let removedCount = $derived(downloaded.filter((t) => !t.file_available).length);
 
+	// Counted after hideRemoved rather than over the whole list, so the number
+	// says what ticking the box would actually show — a swept file you never
+	// saved is not work you can still do.
+	let present = $derived(downloaded.filter((t) => t.file_available || !hideRemoved));
+	let unsavedCount = $derived(present.filter((t) => !t.last_retrieved_at).length);
+
 	let sortedDownloads = $derived(
-		downloaded
-			.filter((t) => t.file_available || !hideRemoved)
+		present
+			.filter((t) => !onlyUnsaved || !t.last_retrieved_at)
 			.sort((a, b) => (sortDir === 'asc' ? compare(a, b) : -compare(a, b)))
+	);
+
+	// Which filter emptied the list decides which one the user is told to undo.
+	// hideRemoved is checked first: it runs first, so if it took everything then
+	// Not saved never had anything to hide.
+	let emptyMessage = $derived(
+		present.length === 0
+			? `All ${removedCount} downloaded ${removedCount === 1 ? 'item' : 'items'} have been removed from the server. Untick "Hide files removed from the server" to see them.`
+			: 'You have saved every download in this list. Untick "Not saved" to see them.'
 	);
 </script>
 
@@ -346,6 +366,15 @@
 					>
 						Hide files removed from the server{removedCount > 0 ? ` (${removedCount})` : ''}
 					</Checkbox>
+
+					<!-- The pile you still have work to do on: downloads the server
+					     fetched but whose bytes never reached this machine. -->
+					<Checkbox
+						bind:checked={onlyUnsaved}
+						classes={{ div: 'text-xs text-gray-500 dark:text-gray-400' }}
+					>
+						Not saved{unsavedCount > 0 ? ` (${unsavedCount})` : ''}
+					</Checkbox>
 				</div>
 
 				{#if folderPickerSupported}
@@ -379,10 +408,7 @@
 			{/if}
 
 			{#if sortedDownloads.length === 0}
-				<p class="py-8 text-center text-sm text-gray-500 dark:text-gray-400">
-					All {removedCount} downloaded {removedCount === 1 ? 'item' : 'items'} have been removed from
-					the server. Untick "Hide files removed from the server" to see them.
-				</p>
+				<p class="py-8 text-center text-sm text-gray-500 dark:text-gray-400">{emptyMessage}</p>
 			{/if}
 
 			{#each sortedDownloads as task (task.id)}
