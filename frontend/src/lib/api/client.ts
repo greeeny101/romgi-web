@@ -10,7 +10,18 @@ export class ApiError extends Error {
 	}
 }
 
-async function refreshAccessToken(): Promise<string | null> {
+/**
+ * Refresh tokens rotate: /auth/refresh blacklists the token it was given and
+ * returns a whole new pair, so the replacement MUST be stored. Keeping the old
+ * refresh token (as this did when the endpoint only returned an access token)
+ * would make the next refresh fail and log the user out.
+ *
+ * Concurrent 401s would otherwise each try to redeem the same now-dead refresh
+ * token and all but one would fail, so in-flight refreshes share one promise.
+ */
+let inFlightRefresh: Promise<string | null> | null = null;
+
+async function doRefresh(): Promise<string | null> {
 	const tokens = auth.peek();
 	if (!tokens) return null;
 	const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
@@ -22,9 +33,19 @@ async function refreshAccessToken(): Promise<string | null> {
 		auth.clear();
 		return null;
 	}
-	const body = await res.json();
-	auth.setAccess(body.access);
-	return body.access as string;
+	const body = (await res.json()) as { access: string; refresh: string };
+	auth.setTokens(body);
+	return body.access;
+}
+
+function refreshAccessToken(): Promise<string | null> {
+	if (!inFlightRefresh) {
+		const pending = doRefresh().finally(() => {
+			if (inFlightRefresh === pending) inFlightRefresh = null;
+		});
+		inFlightRefresh = pending;
+	}
+	return inFlightRefresh;
 }
 
 async function request<T>(path: string, init?: RequestInit, _retried = false): Promise<T> {

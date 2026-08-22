@@ -6,6 +6,7 @@
 	import { theme } from '$lib/stores/theme';
 	import ErrorView from '$lib/components/common/ErrorView.svelte';
 	import CredentialForm from '$lib/components/credentials/CredentialForm.svelte';
+	import AccountSection from '$lib/components/auth/AccountSection.svelte';
 
 	let platforms = $state<Platform[]>([]);
 	catalogApi.platforms().then((result) => (platforms = result)).catch(() => {});
@@ -184,5 +185,8 @@
 		<Button onclick={save} disabled={saving}>
 			{saving ? 'Saving…' : saved ? 'Saved' : 'Save changes'}
 		</Button>
+
+		<!-- Last, and outside the Save button's scope: these commit on their own. -->
+		<AccountSection />
 	{/if}
 </div>

@@ -51,9 +51,10 @@ services:
 
   # Per-queue workers, matching CELERY_TASK_ROUTES in config/settings/base.py.
   # A single unqualified `celery worker` only consumes Celery's implicit
-  # default queue ("celery"), which nothing is ever routed to — every task
-  # here needs a worker explicitly subscribed to its queue via -Q, or it
-  # just sits unconsumed in Redis forever.
+  # default queue ("celery") — every task routed elsewhere needs a worker
+  # explicitly subscribed to its queue via -Q, or it just sits unconsumed in
+  # Redis forever. apps.accounts.tasks (password-reset mail, token pruning) is
+  # deliberately left on "celery" so it rides this worker without a new service.
   celery-worker:
     build:
       context: ./backend
