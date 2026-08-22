@@ -1,5 +1,5 @@
 import { writable } from 'svelte/store';
-import { authApi, type Me } from '$lib/api/auth';
+import { authApi, type Me, type TokenPair } from '$lib/api/auth';
 import { settingsApi } from '$lib/api/settings';
 import { auth } from './auth';
 import { downloads } from './downloads';
@@ -25,8 +25,14 @@ export const session = {
 		auth.setTokens(tokens);
 		await afterAuth();
 	},
-	async register(email: string, password: string) {
-		const tokens = await authApi.register(email, password);
+	async register(email: string, password: string, inviteCode: string) {
+		const tokens = await authApi.register(email, password, inviteCode);
+		auth.setTokens(tokens);
+		await afterAuth();
+	},
+
+	/** Adopt a pair returned by a password reset/change and warm the app. */
+	async adopt(tokens: TokenPair) {
 		auth.setTokens(tokens);
 		await afterAuth();
 	},

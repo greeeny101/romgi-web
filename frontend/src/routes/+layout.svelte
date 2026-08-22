@@ -16,10 +16,14 @@
 		ready = true;
 	});
 
+	// Every route an unauthenticated visitor legitimately lands on. Missing one
+	// here bounces them to /login and throws away the invite or reset link they
+	// arrived with, along with its query string.
+	const publicRoutes = ['/login', '/signup', '/forgot-password', '/reset-password'];
+
 	$effect(() => {
 		if (!ready) return;
-		const isLoginPage = page.url.pathname === '/login';
-		if (!$auth && !isLoginPage) {
+		if (!$auth && !publicRoutes.includes(page.url.pathname)) {
 			goto('/login');
 		}
 	});

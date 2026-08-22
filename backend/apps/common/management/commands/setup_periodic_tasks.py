@@ -54,6 +54,12 @@ class Command(BaseCommand):
             minute="0",
             hour="5",
         )
+        self._crontab(
+            name="Prune expired auth tokens and sessions",
+            task="apps.accounts.tasks.prune_expired_tokens",
+            minute="30",
+            hour="5",
+        )
         self.stdout.write(self.style.SUCCESS("Periodic tasks are up to date."))
 
     def _interval(self, *, name: str, task: str, every: int, period: str) -> None:

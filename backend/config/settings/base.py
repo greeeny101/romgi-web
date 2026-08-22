@@ -132,6 +132,24 @@ CELERY_TASK_ROUTES = {
     "apps.torrents.tasks.*": {"queue": "torrents"},
     "apps.credentials.tasks.*": {"queue": "credentials"},
     "apps.metadata.tasks.*": {"queue": "metadata"},
+    # Deliberately the default "celery" queue rather than one of its own:
+    # the celery-worker service already consumes -Q celery,downloads, so
+    # password-reset mail needs no new worker in docker-compose.yml.
+    "apps.accounts.tasks.*": {"queue": "celery"},
+}
+
+# --- Cache ------------------------------------------------------------------
+# Must be shared across processes, not LocMemCache: the auth throttles
+# (ninja.throttling) and the per-account lockout counters in
+# apps.accounts.services.lockout live here, and daphne plus every celery
+# worker runs in its own process. On LocMemCache each process would keep its
+# own counter and an attacker would get N attempts per process instead of N
+# total. Redis db 3 — 0 is general, 1 Celery, 2 Channels.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": env.str("CACHE_URL", default=f"{REDIS_URL.rstrip('/0')}/3"),
+    },
 }
 
 # --- Channels -------------------------------------------------------------
@@ -145,12 +163,51 @@ CHANNEL_LAYERS = {
 }
 
 # --- Django Ninja / JWT ---------------------------------------------------
+# NOTE: ROTATE_REFRESH_TOKENS/BLACKLIST_AFTER_ROTATION used to be set here and
+# did nothing. ninja_jwt reads them only in ninja_jwt/schema.py — the
+# ninja-extra controller path this project deliberately bypasses (see the
+# module docstring in apps/accounts/api.py) — so rotation never happened and
+# one refresh token stayed valid for the full 14 days. Rotation is now done
+# explicitly in apps.accounts.services.auth.rotate_tokens instead; don't
+# re-add these keys, they'd read as if the library were handling it.
 NINJA_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=14),
-    "ROTATE_REFRESH_TOKENS": True,
-    "BLACKLIST_AFTER_ROTATION": True,
 }
+
+# ninja.throttling identifies clients by IP. With NUM_PROXIES unset, ninja
+# trusts the whole X-Forwarded-For chain, which a client can forge — a new
+# fake chain per request is a new bucket, so every auth throttle below
+# becomes decorative. 0 means "ignore XFF, use REMOTE_ADDR", which is right
+# for the bundled compose setup where nothing fronts daphne. Behind a
+# reverse proxy set this to the number of proxies you actually run.
+NINJA_NUM_PROXIES = env.int("NINJA_NUM_PROXIES", default=0)
+
+# --- Auth ------------------------------------------------------------------
+# Registration is invite-only: there is no open signup. Invites are issued
+# from the Django admin or `manage.py createinvite`. See apps.accounts.models.Invite.
+INVITE_EXPIRY_DAYS = env.int("INVITE_EXPIRY_DAYS", default=14)
+
+# Per-account lockout (apps.accounts.services.lockout). Guards against
+# distributed password spraying, which per-IP throttling alone cannot stop.
+LOGIN_FAILURE_LIMIT = env.int("LOGIN_FAILURE_LIMIT", default=6)
+LOGIN_FAILURE_WINDOW_SECONDS = env.int("LOGIN_FAILURE_WINDOW_SECONDS", default=900)
+LOGIN_LOCKOUT_SECONDS = env.int("LOGIN_LOCKOUT_SECONDS", default=900)
+
+PASSWORD_RESET_TIMEOUT = env.int("PASSWORD_RESET_TIMEOUT", default=60 * 60 * 24)
+
+# The API can't infer the SPA's origin, and password-reset links have to point
+# at the SvelteKit app rather than at Django. Also used to build invite signup
+# URLs in the admin and in `manage.py createinvite`.
+FRONTEND_BASE_URL = env.str("FRONTEND_BASE_URL", default="http://localhost:5173").rstrip("/")
+
+DEFAULT_FROM_EMAIL = env.str("DEFAULT_FROM_EMAIL", default="romgi@localhost")
+SERVER_EMAIL = DEFAULT_FROM_EMAIL
+
+# The Django admin is a session+CSRF surface that the Ninja throttles above
+# can't reach, so moving it off the default path is worth the one env var.
+# Trailing slash required (it's passed straight to path()).
+ADMIN_URL = env.str("ADMIN_URL", default="admin/")
 
 # --- qBittorrent -----------------------------------------------------------
 QBITTORRENT_HOST = env.str("QBITTORRENT_HOST", default="http://localhost:8080")

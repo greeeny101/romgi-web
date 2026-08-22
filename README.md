@@ -93,11 +93,30 @@ and `sveltekit`.
 | Backend admin | http://localhost:8001/admin |
 | qBittorrent WebUI | http://localhost:8080 |
 
-**Django admin login**: no account exists yet — create one:
+**First account**: registration is invite-only — there is no open signup, so
+the first account has to come from the shell. Create the admin, then invite
+everyone else:
 
 ```bash
 docker compose exec django python manage.py createsuperuser
+
+# Prints a signup link to send to the new user. --email binds the invite to
+# that address so a leaked link is useless to anyone else.
+docker compose exec django python manage.py createinvite --email someone@example.com
 ```
+
+Invites can also be issued from the Django admin (Accounts → Invites), which
+shows the signup link for each unused one.
+
+**Forgotten passwords**: if `EMAIL_HOST` is configured, users self-serve from
+the "Forgot your password?" link. If it isn't — email is optional here — the
+reset endpoint deliberately does nothing, and you issue links by hand:
+
+```bash
+docker compose exec django python manage.py resetlink someone@example.com
+```
+
+That link grants access to the account, so send it over something private.
 
 **First qBittorrent login**: it generates a random temporary password on
 first boot — check `docker compose logs qbittorrent` for it, log in as
@@ -226,7 +245,14 @@ cd backend && python manage.py check && python manage.py makemigrations --check 
 cd frontend && npm run check
 ```
 
-There is no automated test suite yet — verification so far has been
+Auth is the one area with real tests, because "the lockout still works" is
+not something you can usefully verify by clicking around:
+
+```bash
+docker compose exec django python -m pytest apps/accounts/tests/ -q
+```
+
+Everything else has no automated coverage yet — verification so far has been
 targeted manual/scripted testing per feature (see `KNOWN_ISSUES.md`) plus
 the two `check` commands above.
 
@@ -238,3 +264,22 @@ deploying — several values (`ALLOWED_HOSTS`, `AWS_STORAGE_BUCKET_NAME`,
 `CSRF_TRUSTED_ORIGINS`, etc.) are required and have no defaults. See
 `KNOWN_ISSUES.md` for what production storage does *not* yet cover (staged
 downloads stay on local disk).
+
+### Auth model
+
+- **Invite-only registration.** `POST /api/auth/register` requires an unused
+  invite code; there is no open signup path.
+- **Rate limiting and lockout.** Per-IP throttles on every unauthenticated
+  endpoint, plus a per-account lockout (`LOGIN_FAILURE_LIMIT`) that counts
+  failures from the API and the Django admin form alike. Both need a shared
+  cache — set `CACHE_URL`, and see the `CACHES` note in `settings/base.py`.
+- **Set `NINJA_NUM_PROXIES`** to the number of reverse proxies in front of
+  daphne. Leaving it wrong lets a client forge `X-Forwarded-For` and walk past
+  every throttle above.
+- **Rotating refresh tokens.** `/auth/refresh` returns a new pair and
+  blacklists the old token; users can list and revoke their own sessions from
+  Settings → Account.
+- **Not indexed.** `static/robots.txt` and the `noindex` tag in `src/app.html`
+  keep this private instance out of search results.
+- **No 2FA yet.** The token path is structured for it (see the docstring in
+  `apps/accounts/services/auth.py`), but it isn't built.

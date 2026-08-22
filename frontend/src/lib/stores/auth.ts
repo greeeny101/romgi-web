@@ -28,13 +28,8 @@ function createAuthStore() {
 			if (browser) localStorage.setItem(STORAGE_KEY, JSON.stringify(tokens));
 			set(tokens);
 		},
-		setAccess(access: string) {
-			const current = loadInitial();
-			if (!current) return;
-			const updated = { ...current, access };
-			if (browser) localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-			set(updated);
-		},
+		// There is deliberately no setAccess(): refresh tokens rotate, so the
+		// access token never changes on its own — both always move together.
 		clear() {
 			if (browser) localStorage.removeItem(STORAGE_KEY);
 			set(null);

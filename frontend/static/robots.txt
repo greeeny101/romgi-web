@@ -1,3 +1,7 @@
-# allow crawling everything by default
+# This is a private, invite-only instance — there is nothing here for a search
+# engine to index, and the entry/{slug} pages would leak the catalogue if it
+# did. The <meta name="robots"> tag in src/app.html is the actual enforcement;
+# robots.txt is only a request and does not stop a URL discovered via an
+# inbound link from being indexed.
 User-agent: *
-Disallow:
+Disallow: /

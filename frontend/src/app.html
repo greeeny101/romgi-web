@@ -4,6 +4,28 @@
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="text-scale" content="scale" />
+
+		<!--
+			Private instance: keep it out of search results. This tag, not
+			robots.txt, is what actually prevents indexing — robots.txt only asks
+			crawlers not to fetch, and a URL someone links to can still be indexed
+			without ever being fetched.
+		-->
+		<meta name="robots" content="noindex, nofollow" />
+
+		<!--
+			Static because +layout.ts sets ssr = false: crawlers and link unfurlers
+			(Slack, Discord, iMessage) receive this shell with no JavaScript run, so
+			anything set from a component is invisible to them. Per-page <title>s in
+			<svelte:head> still win in a real browser. With noindex above, the
+			description below serves link previews only — it will not appear in Google.
+		-->
+		<title>romgi</title>
+		<meta name="description" content="Private ROM catalogue and download manager." />
+		<meta property="og:title" content="romgi" />
+		<meta property="og:description" content="Private ROM catalogue and download manager." />
+		<meta property="og:type" content="website" />
+
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">

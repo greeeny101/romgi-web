@@ -71,10 +71,41 @@ credentials were available.
   archive is rejected if *any* entry's path would escape the output
   directory. Strictly safer, just less granular than the original Kotlin
   implementation. Verified against a real path-traversal payload.
-- **No email/password-reset flow.** `EMAIL_BACKEND`/`EMAIL_HOST`/etc. are
-  configured in `production.py` but nothing in the app sends email yet —
-  no password reset, no email verification, no notifications. These
-  settings exist for future use only.
+- **Email is optional, so password reset has two modes.** With `EMAIL_HOST`
+  set, `POST /auth/password/reset` queues a link. With it unset, the endpoint
+  still answers `202` (it must, or it would leak which addresses are
+  registered) but sends nothing — `GET /auth/capabilities` is what tells the
+  SPA to say so, and `manage.py resetlink <email>` is the operator's fallback.
+  Nothing else in the app sends email: no notifications, no email
+  verification. Verification is skipped deliberately — an invite already
+  establishes who is joining, and requiring SMTP would make the app unusable
+  for operators without a mail server.
+- **The register endpoint distinguishes "already registered" from other
+  failures** (`409` vs `403`), which is technically an enumeration oracle.
+  Reaching that branch requires a valid unused invite, so the attacker must
+  already have been let in; telling a real invitee that they already have an
+  account is worth more than closing it. Login and password-reset are both
+  generic.
+- **Lockout state lives only in Redis.** Flushing the cache clears every
+  lockout counter, and a Redis outage disables the per-account lockout
+  entirely (the per-IP throttles fail the same way — `ninja.throttling` is
+  cache-backed too). Acceptable for a rate-limiting control, and the reason
+  password strength is enforced server-side rather than relying on lockout
+  alone.
+- **WebSocket auth passes the access token in the query string**
+  (`apps/realtime/auth.py`), where it can land in proxy and server access
+  logs. A browser `WebSocket()` can't set an `Authorization` header, so the
+  real fix is a short-lived single-use ticket endpoint that trades a bearer
+  token for a one-shot WS credential. Not done.
+- **Refresh tokens live in `localStorage`**, so any XSS yields a 14-day
+  credential. The usual mitigation — an httpOnly cookie — conflicts with the
+  deliberate no-cookie, cross-origin SPA design (see `routes/+layout.ts`).
+  Rotation plus revocable sessions is the mitigation that fits: a stolen
+  token is single-use, and its session can be killed from Settings → Account.
+- **No two-factor auth.** `apps/accounts/services/auth.py` is structured so
+  that adding TOTP is one model plus a branch in `login()` rather than a
+  rewrite (the `sid` claim and `UserSession` already exist for it), but none
+  of it is built.
 - **Choosing a download folder is Chromium-only.** The Library's Downloaded
   tab can save straight into a folder the user picks once
   (`frontend/src/lib/downloadTarget.ts`), which needs the File System Access
