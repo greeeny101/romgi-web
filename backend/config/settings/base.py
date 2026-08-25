@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     "apps.library",
     "apps.downloads",
     "apps.torrents",
+    "apps.romsets",
     "apps.credentials",
     "apps.metadata",
     "apps.realtime",
@@ -130,6 +131,14 @@ CELERY_TASK_ROUTES = {
     # own, since it's not an external-daemon integration like torrents.
     "apps.downloads.debrid.tasks.*": {"queue": "downloads"},
     "apps.torrents.tasks.*": {"queue": "torrents"},
+    # ROM sets drive the same qBittorrent daemon, so they belong on the same
+    # queue as the rest of the torrent work.
+    "apps.romsets.tasks.*": {"queue": "torrents"},
+    # ...except extraction, which unpacks multi-gigabyte archives and would
+    # hold a torrents-queue slot for minutes, starving the 3s/5s poll beats
+    # that share it. Celery matches literal route keys before glob patterns,
+    # so this wins over the line above regardless of ordering.
+    "apps.romsets.tasks.extract_romset": {"queue": "romsets"},
     "apps.credentials.tasks.*": {"queue": "credentials"},
     "apps.metadata.tasks.*": {"queue": "metadata"},
     # Deliberately the default "celery" queue rather than one of its own:
@@ -221,6 +230,27 @@ QBITTORRENT_PASSWORD = env.str("QBITTORRENT_PASSWORD", default="adminadmin")
 # reads the resulting files back using the former; never conflate the two.
 TORRENT_WORKING_DIR = env.str("TORRENT_WORKING_DIR", default=str(BASE_DIR / "data" / "torrents"))
 QBITTORRENT_SAVE_PATH = env.str("QBITTORRENT_SAVE_PATH", default="/downloads")
+
+# --- ROM set library --------------------------------------------------------
+# Exactly the same two-views-of-one-volume arrangement as the pair above, for
+# the `rom_library` volume that whole-item ROM-set downloads land in:
+# Django/Celery see it at ROM_LIBRARY_DIR, qBittorrent sees the identical
+# files at QBITTORRENT_LIBRARY_PATH. apps.romsets.tasks hands qBittorrent the
+# latter as a save path and reads the results back through the former; never
+# conflate the two.
+#
+# Unlike STAGED_FILES_DIR, nothing ever sweeps this directory — a downloaded
+# set is the user's library, not a staging area with a retention clock.
+ROM_LIBRARY_DIR = env.str("ROM_LIBRARY_DIR", default=str(BASE_DIR / "data" / "library"))
+QBITTORRENT_LIBRARY_PATH = env.str("QBITTORRENT_LIBRARY_PATH", default="/library")
+
+# Headroom a ROM set is never allowed to eat into. A single set can be tens
+# of gigabytes and this volume is shared with Postgres, Redis and the staged
+# downloads, so filling it to the last hundred megabytes takes the whole
+# stack down rather than just failing the transfer. Enforced on admission, on
+# task start, before extraction, and continuously while transferring — see
+# apps.romsets.space.
+ROM_LIBRARY_MIN_FREE_BYTES = env.int("ROM_LIBRARY_MIN_FREE_BYTES", default=2 * 1024**3)
 
 # --- Staged download file retention ----------------------------------------
 STAGED_FILE_RETENTION_HOURS = env.int("STAGED_FILE_RETENTION_HOURS", default=24)

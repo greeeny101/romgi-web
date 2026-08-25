@@ -1,0 +1,39 @@
+# Curated emulator → archive.org query map for the ROM-set browser.
+#
+# Free-text search against archive.org alone is too noisy to be useful: a bare
+# "fbneo" query returns 125 items including Android APKs, game-stick SD-card
+# backups and unrelated shovelware. Each entry here pins the search to the
+# terms and mediatype that actually surface published romsets, and ties the
+# results to a real catalog Platform so downloads land in the right folder.
+#
+# `platform_id` MUST be a real apps.catalog.Platform primary key (they're
+# short string PKs — 'fbneo', 'mame', 'ps1', …). A typo here is caught by the
+# system check in checks.py, not at FK-insert time halfway through a download.
+#
+# `query` is passed to advancedsearch.php as-is. A user's own search text is
+# ANDed onto it rather than replacing it, so the curation always holds.
+
+- id: fbneo
+  name: FinalBurn Neo
+  platform_id: fbneo
+  query: '(fbneo OR "finalburn neo" OR "final burn neo") AND mediatype:(software)'
+
+- id: mame
+  name: MAME
+  platform_id: mame
+  query: '(mame AND (romset OR "rom set" OR merged OR chd)) AND mediatype:(software)'
+
+- id: neogeo
+  name: Neo Geo
+  platform_id: ngcd
+  query: '("neo geo" OR neogeo) AND (romset OR "rom set" OR collection) AND mediatype:(software)'
+
+- id: nointro
+  name: No-Intro (cartridge sets)
+  platform_id: null
+  query: '("no-intro" OR nointro) AND mediatype:(software)'
+
+- id: redump
+  name: Redump (disc sets)
+  platform_id: null
+  query: 'redump AND mediatype:(software)'

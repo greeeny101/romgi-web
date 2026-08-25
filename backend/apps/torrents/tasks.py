@@ -27,7 +27,8 @@ from apps.downloads.models import DownloadTask
 from apps.downloads.progress import push_progress, push_status
 from apps.downloads.tasks import _finish_download, _handle_download_failure, task_dir
 
-from .client import FINISHED_STATES, PRIORITY_DOWNLOAD, PRIORITY_SKIP, client
+from .client import FINISHED_STATES, client
+from .ownership import desired_priorities, torrent_in_use
 
 logger = logging.getLogger(__name__)
 
@@ -59,11 +60,13 @@ def _other_active_tasks(torrent_hash: str, exclude_task_id: int | None = None) -
     infohash shared across every Link that points into it), and qBittorrent
     dedupes torrents by infohash — so two unrelated DownloadTasks can end up
     riding the same qBittorrent torrent, each wanting a different file out
-    of it. True if some other task is still actively downloading from it."""
-    qs = DownloadTask.objects.filter(status="downloading", torrent_hash=torrent_hash)
-    if exclude_task_id is not None:
-        qs = qs.exclude(id=exclude_task_id)
-    return qs.exists()
+    of it. True if something else still needs it.
+
+    Delegates to apps.torrents.ownership because DownloadTask is no longer
+    the only owner of a torrent: a romsets.RomSetDownload can be riding the
+    same infohash, and removing the torrent under it would strand it at
+    "downloading" with no error."""
+    return torrent_in_use(torrent_hash, exclude_task_id=exclude_task_id)
 
 
 def _release_torrent(torrent_hash: str, exclude_task_id: int | None = None) -> None:
@@ -139,10 +142,10 @@ def apply_selective_priority(self, task_id: int) -> None:
     the Web-API-polling equivalent of TorrentServiceImpl's
     METADATA_RECEIVED-triggered replay of pendingPriorities.
 
-    Priorities are set from every task currently sharing this torrent_hash,
+    Priorities are set from every owner currently sharing this torrent_hash,
     not just this one — a shared torrent (see _other_active_tasks) means
-    another in-flight task may already have its own wanted file selected
-    here, and overwriting that back to skip would stall it."""
+    another in-flight task, or a ROM set, may already have its own files
+    selected here, and overwriting those back to skip would stall them."""
     task = DownloadTask.objects.get(id=task_id)
     if task.status != "downloading" or not task.torrent_hash:
         return
@@ -151,15 +154,8 @@ def apply_selective_priority(self, task_id: int) -> None:
     if not files:
         raise self.retry()
 
-    wanted_indexes = set(
-        DownloadTask.objects.filter(status="downloading", torrent_hash=task.torrent_hash).values_list(
-            "link_torrent_file_index", flat=True
-        )
-    )
-    download_everything = None in wanted_indexes
-    for f in files:
-        priority = PRIORITY_DOWNLOAD if (download_everything or f.index in wanted_indexes) else PRIORITY_SKIP
-        client.set_file_priority(task.torrent_hash, f.id, priority)
+    for file_id, priority in desired_priorities(task.torrent_hash, files).items():
+        client.set_file_priority(task.torrent_hash, file_id, priority)
 
 
 @shared_task

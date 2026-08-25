@@ -41,6 +41,7 @@ services:
       - ./backend:/app
       - staged_files:/app/data/staged
       - torrent_data:/app/data/torrents
+      - rom_library:/app/data/library
     ports:
       - "127.0.0.1:8001:8000"
     depends_on:
@@ -87,6 +88,28 @@ services:
       - ./backend:/app
       - staged_files:/app/data/staged
       - torrent_data:/app/data/torrents
+      - rom_library:/app/data/library
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ROM-set extraction only. Unpacking a 5-20GB archive occupies its worker
+  # for minutes at a time, so it must not share the torrents queue with the
+  # 3s/5s poll beats. --concurrency=1 because two simultaneous extractions
+  # would double peak disk use on the very volume the reserve is protecting.
+  celery-worker-romsets:
+    build:
+      context: ./backend
+    command: celery -A config worker -l info -Q romsets --concurrency=1
+    restart: unless-stopped
+    env_file: ./backend/.env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.development
+    volumes:
+      - ./backend:/app
+      - rom_library:/app/data/library
     depends_on:
       postgres:
         condition: service_healthy
@@ -166,7 +189,20 @@ services:
       - 1.1.1.1
       - 8.8.8.8
     volumes:
+      # Without this, every recreate of this container starts qBittorrent
+      # from scratch: it loses its torrent state AND its WebUI password, and
+      # linuxserver's entrypoint generates a fresh random temporary one. The
+      # QBITTORRENT_PASSWORD in .env then no longer matches, every API call
+      # fails to authenticate, and qBittorrent bans the caller's IP for
+      # trying too often — which surfaces as ROM sets and torrent downloads
+      # failing with "Your IP address has been banned".
+      - qbittorrent_config:/config
       - torrent_data:/downloads
+      # ROM sets are saved straight into the library rather than downloaded
+      # here and copied afterwards — a 20GB copy between two volumes at the
+      # end of every set would double both the time and the peak disk use.
+      # Must stay in sync with QBITTORRENT_LIBRARY_PATH.
+      - rom_library:/library
     ports:
       - "127.0.0.1:8080:8080"
       # BitTorrent peer/DHT port — without this published, qBittorrent has
@@ -195,3 +231,21 @@ volumes:
   postgres_data:
   staged_files:
   torrent_data:
+  qbittorrent_config:
+  # Where completed ROM sets live. Unlike staged_files this is never swept —
+  # it is the user's library, so it is a bind mount to a real host folder
+  # rather than a named volume: on macOS a named volume lives inside the
+  # Docker VM, where Finder can't reach it and the only way to get a 5GB set
+  # out is `docker compose cp`.
+  #
+  # Point it wherever you want sets to land (a NAS share, the folder your
+  # cabinet reads) by setting ROM_LIBRARY_HOST_PATH in a .env file next to
+  # this one. Must be an ABSOLUTE path — the bind driver won't resolve a
+  # relative one — must exist before `up`, and if it's a network mount it
+  # must be mounted, or the containers won't start.
+  rom_library:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${ROM_LIBRARY_HOST_PATH:-/Users/marcgreenwood/roms}

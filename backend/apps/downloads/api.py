@@ -212,8 +212,14 @@ def pause_download(request, task_id: int):
         # needs to be told directly.
         if task.link_is_torrent and task.torrent_hash:
             from apps.torrents.client import client as torrent_client
+            from apps.torrents.ownership import torrent_in_use
 
-            torrent_client.stop(task.torrent_hash)
+            # Only stop the torrent if this task is the last thing wanting
+            # it. qBittorrent dedupes by infohash, so the same torrent can be
+            # feeding another task or a whole ROM set — pausing this one row
+            # must not stall those.
+            if not torrent_in_use(task.torrent_hash, exclude_task_id=task.id):
+                torrent_client.stop(task.torrent_hash)
         task.status = "paused"
         task.save(update_fields=["status", "updated_at"])
     return _out(task)

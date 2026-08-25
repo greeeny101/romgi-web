@@ -22,7 +22,16 @@ DEBUG_TOOLBAR_CONFIG = {
     # a fixed ~8s DNS-resolution delay to literally every request. This app
     # never runs with DEBUG=True outside trusted local dev, so there's no
     # reason to gate the toolbar by IP in the first place.
-    "SHOW_TOOLBAR_CALLBACK": lambda request: DEBUG,
+    #
+    # The /api/ exclusion is not cosmetic. The toolbar only ever renders
+    # into an HTML response, so on a JSON endpoint it profiles the request
+    # and throws the result away — but it still captures every SQL
+    # statement and runs sqlparse over it to pretty-print. A bulk insert of
+    # a few thousand rows (a ROM set's file list) produces a statement big
+    # enough to blow sqlparse's 10,000-token ceiling, which surfaced as a
+    # 500 on POST /api/romsets/downloads, and the memory the tokenizer took
+    # on the way there was enough to get daphne OOM-killed outright.
+    "SHOW_TOOLBAR_CALLBACK": lambda request: DEBUG and not request.path.startswith("/api/"),
 }
 
 EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
