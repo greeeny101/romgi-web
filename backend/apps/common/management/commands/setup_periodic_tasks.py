@@ -35,6 +35,12 @@ class Command(BaseCommand):
             every=3,
             period=IntervalSchedule.SECONDS,
         )
+        self._interval(
+            name="Poll active ROM set downloads",
+            task="apps.romsets.tasks.poll_active_romsets",
+            every=5,
+            period=IntervalSchedule.SECONDS,
+        )
         self._crontab(
             name="Run full catalog ingestion",
             task="apps.ingestion.tasks.run_full_ingestion",

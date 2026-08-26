@@ -36,6 +36,7 @@
 	const navLinks = [
 		{ href: '/', label: 'Browse' },
 		{ href: '/downloads', label: 'Downloads' },
+		{ href: '/sets', label: 'ROM Sets' },
 		{ href: '/library', label: 'Library' },
 		{ href: '/sources', label: 'Sources' },
 		{ href: '/settings', label: 'Settings' }

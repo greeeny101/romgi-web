@@ -4,6 +4,7 @@ import { settingsApi } from '$lib/api/settings';
 import { auth } from './auth';
 import { downloads } from './downloads';
 import { favorites } from './favorites';
+import { romsets } from './romsets';
 import { theme } from './theme';
 
 export const currentUser = writable<Me | null>(null);
@@ -13,6 +14,7 @@ async function afterAuth() {
 	currentUser.set(me);
 	await favorites.load();
 	downloads.start();
+	romsets.start();
 	settingsApi
 		.get()
 		.then((s) => theme.set(s.theme))
@@ -54,6 +56,7 @@ export const session = {
 		auth.clear();
 		currentUser.set(null);
 		downloads.stop();
+		romsets.stop();
 		favorites.clear();
 		theme.set('system');
 	}

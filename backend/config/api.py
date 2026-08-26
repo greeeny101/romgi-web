@@ -15,6 +15,7 @@ from apps.downloads.api import router as downloads_router
 from apps.ingestion.api import router as ingestion_router
 from apps.library.api import router as library_router
 from apps.metadata.api import router as metadata_router
+from apps.romsets.api import router as romsets_router
 
 api = NinjaAPI(title="romgi API", version="1.0.0")
 
@@ -26,3 +27,4 @@ api.add_router("/downloads", downloads_router)
 api.add_router("/credentials", credentials_router)
 api.add_router("/metadata", metadata_router)
 api.add_router("/ingestion", ingestion_router)
+api.add_router("/romsets", romsets_router)

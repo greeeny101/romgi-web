@@ -62,3 +62,4 @@ export class ReconnectingSocket {
 
 export const downloadsSocket = new ReconnectingSocket('/downloads/');
 export const ingestionSocket = new ReconnectingSocket('/ingestion/');
+export const romsetsSocket = new ReconnectingSocket('/romsets/');

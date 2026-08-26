@@ -30,7 +30,7 @@
 				"-A", "config", "worker",
 				"-l", "info",
 				"--pool=solo",
-				"-Q", "celery,downloads,torrents,credentials,metadata,ingestion"
+				"-Q", "celery,downloads,torrents,romsets,credentials,metadata,ingestion"
 			],
 			"cwd": "${workspaceFolder}/backend",
 			"python": "${workspaceFolder}/backend/.venv/bin/python",
