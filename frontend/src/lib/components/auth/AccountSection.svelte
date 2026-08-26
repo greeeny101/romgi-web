@@ -132,30 +132,36 @@
 	{#if loadingSessions}
 		<div class="flex justify-center py-4"><Spinner size="6" /></div>
 	{:else}
-		<ul class="divide-y divide-gray-200 dark:divide-gray-700">
-			{#each sessions as s (s.id)}
-				<li class="flex items-center justify-between gap-4 py-2">
-					<div class="min-w-0">
-						<p class="truncate text-sm text-gray-700 dark:text-gray-300">{describe(s)}</p>
-						<p class="text-xs text-gray-500 dark:text-gray-400">
-							Last used {new Date(s.last_used_at).toLocaleString()}
-							{#if s.current}
-								· <span class="text-green-600 dark:text-green-400">this device</span>
-							{/if}
-						</p>
-					</div>
-					{#if !s.current}
-						<Button
-							size="xs"
-							color="red"
-							disabled={busySessionId === s.id}
-							onclick={() => revoke(s.id)}
-						>
-							Revoke
-						</Button>
-					{/if}
-				</li>
-			{/each}
-		</ul>
+		<!-- Bounded so a long device list scrolls in place instead of stretching
+		     the settings page. -->
+		<div
+			class="max-h-64 overflow-y-auto rounded-lg border border-gray-200 px-3 dark:border-gray-700"
+		>
+			<ul class="divide-y divide-gray-200 dark:divide-gray-700">
+				{#each sessions as s (s.id)}
+					<li class="flex items-center justify-between gap-4 py-2">
+						<div class="min-w-0">
+							<p class="truncate text-sm text-gray-700 dark:text-gray-300">{describe(s)}</p>
+							<p class="text-xs text-gray-500 dark:text-gray-400">
+								Last used {new Date(s.last_used_at).toLocaleString()}
+								{#if s.current}
+									· <span class="text-green-600 dark:text-green-400">this device</span>
+								{/if}
+							</p>
+						</div>
+						{#if !s.current}
+							<Button
+								size="xs"
+								color="red"
+								disabled={busySessionId === s.id}
+								onclick={() => revoke(s.id)}
+							>
+								Revoke
+							</Button>
+						{/if}
+					</li>
+				{/each}
+			</ul>
+		</div>
 	{/if}
 </div>

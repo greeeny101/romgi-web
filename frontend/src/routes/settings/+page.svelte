@@ -16,13 +16,6 @@
 		{ id: 'realdebrid', name: 'Real-Debrid' }
 	];
 
-	// Field lists come from the backend now (GET /credentials/{kind}/{id}) so
-	// they can't disagree with what each provider actually requires.
-	const screenScraperHint =
-		"ScreenScraper's API authenticates on a developer ID and password — a personal " +
-		'account alone will not connect. Request developer access on the ScreenScraper ' +
-		'forum, then add your own account below to raise the request quota.';
-
 	let settings = $state<UserSettings | null>(null);
 	let loading = $state(true);
 	let saving = $state(false);
@@ -172,15 +165,12 @@
 			<span class="text-sm text-gray-700 dark:text-gray-300">Show extended metadata on entry pages</span>
 			<Toggle bind:checked={settings.metadata_enabled} />
 		</div>
-		{#if settings.metadata_enabled}
-			<CredentialForm
-				kind="metadata"
-				providerId="screenscraper"
-				providerName="ScreenScraper"
-				hint={screenScraperHint}
-			/>
-			<CredentialForm kind="metadata" providerId="steamgriddb" providerName="SteamGridDB" />
-		{/if}
+		<a
+			href="/settings/metadata"
+			class="rounded-lg border border-gray-200 p-4 text-sm text-primary-600 hover:bg-gray-50 dark:border-gray-700 dark:text-primary-400 dark:hover:bg-gray-800"
+		>
+			Manage metadata providers &rarr;
+		</a>
 
 		<Button onclick={save} disabled={saving}>
 			{saving ? 'Saving…' : saved ? 'Saved' : 'Save changes'}
