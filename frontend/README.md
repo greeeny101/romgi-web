@@ -1,42 +1,19 @@
-# sv
+# romgi-web frontend
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+The SvelteKit (Svelte 5, CSR-only) frontend for
+[romgi-web](../README.md), styled with FlowbiteSvelte and Tailwind CSS v4.
 
-## Creating a project
+It talks to the Django backend over REST and a Channels WebSocket, so it needs
+that backend running — it isn't useful standalone. The usual way to run
+everything is `docker compose up --build` from the repo root.
 
-If you're seeing this, you've probably already done this step. Congrats!
+To run just this against a backend on the host:
 
-```sh
-# create a new project
-npx sv create my-app
-```
-
-To recreate this project with the same configuration:
-
-```sh
-# recreate this project
-npx sv@0.17.0 create --template minimal --types ts --install npm .
-```
-
-## Developing
-
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
-
-```sh
+```bash
+npm install
+cp .env.example .env   # points at localhost:8001
 npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
 ```
 
-## Building
-
-To create a production version of your app:
-
-```sh
-npm run build
-```
-
-You can preview the production build with `npm run preview`.
-
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+See [docs/development.md](../docs/development.md) for the full local setup,
+including the VS Code debug configs and `npm run check`.
