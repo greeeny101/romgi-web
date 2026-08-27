@@ -26,12 +26,25 @@ from .screenscraper_systems import SCREENSCRAPER_SYSTEM_IDS
 
 API_HOST = "api.screenscraper.fr"
 BASE_URL = f"https://{API_HOST}/api2"
+
+# Media is delivered from a separate host, and it is authenticated exactly
+# like the API: fetching one of these URLs without credentials returns the
+# French login error as text/html rather than an image. Both hosts therefore
+# have to be proxyable (apps.metadata.api), and this stays a set of exact
+# hostnames — never a suffix match, or "api.screenscraper.fr.evil.example"
+# would satisfy it.
+MEDIA_HOSTS = frozenset({API_HOST, "neoclone.screenscraper.fr"})
 TIMEOUT = (10, 30)
 
 # Everything in a ScreenScraper URL that authenticates rather than addresses.
 # The API echoes all of these back inside the media URLs it returns, so they
 # have to be strippable — see _strip_auth.
 AUTH_PARAMS = ("devid", "devpassword", "ssid", "sspassword", "softname")
+
+_DEV_REJECTED = (
+    "ScreenScraper rejected this instance's developer credentials — check "
+    "SCREENSCRAPER_DEV_ID and SCREENSCRAPER_DEV_PASSWORD on the server."
+)
 
 
 def build_auth_params(creds: dict) -> dict:
@@ -81,6 +94,55 @@ def _strip_auth(url: str) -> str:
     return urlunparse(parsed._replace(query=urlencode(kept)))
 
 
+# api2's documented status codes (https://www.screenscraper.fr/webapi2.php).
+# Everything here is a whole-account or whole-server condition rather than
+# anything about the game being asked for, so none of it is a "no match".
+STATUS_ERRORS = {
+    401: (
+        "ScreenScraper has closed the API to non-members because its servers are "
+        "saturated. This is temporary and says nothing about your credentials — try again later."
+    ),
+    423: "ScreenScraper's API is closed entirely right now (server-side problems). Try again later.",
+    426: (
+        "ScreenScraper has blacklisted this scraper as non-compliant or an obsolete "
+        "version. The server administrator needs to take this up with them."
+    ),
+    429: "ScreenScraper's thread limit for this account is already in use — too many requests at once.",
+    430: "ScreenScraper daily scrape quota exceeded for this account; it resets tomorrow.",
+    431: (
+        "ScreenScraper has seen too many unrecognised ROMs from this account today "
+        "and is refusing more until tomorrow."
+    ),
+}
+
+
+def _status_result(resp) -> "MetadataResult | None":
+    """Maps the documented status codes; None means "not an error, carry on".
+
+    Two of these are easy to get wrong, and were. 401 is not an
+    authentication failure — their table gives it as "API fermé pour les non
+    membres ou les membres inactifs", attributed to server saturation
+    (CPU>60%) — so reporting it as bad credentials sends people off to
+    re-check keys that are fine. And 400 is not a miss: it means we built a
+    malformed request. Only 404 is "no match", so folding 400 in with it
+    turned integration bugs into silently empty results.
+    """
+    code = resp.status_code
+    if code == 404:
+        return MetadataNoMatch()
+    if code == 403:
+        # "identifiants developpeur éronnés" — the developer pair, not the user's.
+        error = _text_error(resp.text) if resp.text.strip() else MetadataError(_DEV_REJECTED)
+        error.auth_error = True
+        return error
+    if code == 400:
+        detail = resp.text.strip()[:120] or "no detail given"
+        return MetadataError(f"ScreenScraper rejected the request as malformed: {detail}")
+    if code in STATUS_ERRORS:
+        return MetadataError(STATUS_ERRORS[code])
+    return None
+
+
 def _text_error(text: str) -> MetadataError:
     # ScreenScraper returns errors as plain text under a JSON content-type,
     # sometimes with HTTP 200 and sometimes with 401/403. Both login failures
@@ -89,11 +151,7 @@ def _text_error(text: str) -> MetadataError:
     # is what made a missing devid look like a wrong password.
     lower = text.lower()
     if "identifiants développeur" in lower or "identifiants developpeur" in lower:
-        return MetadataError(
-            "ScreenScraper rejected this instance's developer credentials — check "
-            "SCREENSCRAPER_DEV_ID and SCREENSCRAPER_DEV_PASSWORD on the server.",
-            auth_error=True,
-        )
+        return MetadataError(_DEV_REJECTED, auth_error=True)
     if "erreur de login" in lower:
         return MetadataError("Invalid ScreenScraper username or password", auth_error=True)
     if "votre quota" in lower:
@@ -152,9 +210,16 @@ class ScreenScraperProvider(MetadataProvider):
                 return _text_error(resp.text).message
             if isinstance(body, dict):
                 return None
-        # Auth failures come back as 401/403 with a plain-text French reason
-        # (under a JSON content-type), so prefer that reason over a bare
-        # status code — "quota exceeded" and "bad login" both land here.
+        # Same documented status table as fetch() — a saturated server or an
+        # exhausted quota must not be reported here as bad credentials, since
+        # this is the message behind the settings page's "Test" button.
+        # MetadataNoMatch is unreachable in practice (404 is per-game and this
+        # endpoint asks about the account), so it is treated as a pass.
+        status_result = _status_result(resp)
+        if isinstance(status_result, MetadataError):
+            return status_result.message
+        # Failures also arrive as plain French text under HTTP 200, so prefer
+        # that reason over a bare status code when there is one.
         if resp.text.strip():
             return _text_error(resp.text).message
         return f"ScreenScraper returned {resp.status_code}"
@@ -177,14 +242,9 @@ class ScreenScraperProvider(MetadataProvider):
         except requests.RequestException as exc:
             return MetadataError(str(exc) or "ScreenScraper request failed")
 
-        if resp.status_code in (400, 404):
-            return MetadataNoMatch()
-        if resp.status_code in (401, 403):
-            error = _text_error(resp.text) if resp.text.strip() else MetadataError("Invalid ScreenScraper credentials")
-            error.auth_error = True
-            return error
-        if resp.status_code == 429:
-            return MetadataError("ScreenScraper quota exceeded")
+        status_result = _status_result(resp)
+        if status_result is not None:
+            return status_result
 
         try:
             body = resp.json()

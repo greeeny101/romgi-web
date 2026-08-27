@@ -29,7 +29,7 @@ from apps.catalog.models import CatalogBuild, Entry
 from apps.credentials.models import EncryptedCredential
 
 from .providers.base import MediaItem
-from .providers.screenscraper import API_HOST as SCREENSCRAPER_HOST
+from .providers.screenscraper import MEDIA_HOSTS as SCREENSCRAPER_MEDIA_HOSTS
 from .providers.screenscraper import TIMEOUT as SCREENSCRAPER_TIMEOUT
 from .providers.screenscraper import build_auth_params
 from .schemas import GameMetadataOut, MediaOut
@@ -78,7 +78,7 @@ def _proxied(request, url: str) -> str:
     tokens expire, and a signed URL must never be what gets written into a
     GameMetadataCache row that outlives it by two weeks.
     """
-    if not url or urlparse(url).hostname != SCREENSCRAPER_HOST:
+    if not url or urlparse(url).hostname not in SCREENSCRAPER_MEDIA_HOSTS:
         return url
     token = signing.dumps({"u": request.user.id, "url": url}, salt=MEDIA_SALT)
     # Absolute: the browser resolves <img src> against the frontend origin
@@ -104,7 +104,7 @@ def get_media(request, token: str):
     # Belt and braces beside the signature: without this, anyone who ever
     # obtains a signing key turns this into an open proxy onto the internal
     # network. A signed token is not a reason to skip the allowlist.
-    if parsed.scheme != "https" or parsed.hostname != SCREENSCRAPER_HOST:
+    if parsed.scheme != "https" or parsed.hostname not in SCREENSCRAPER_MEDIA_HOSTS:
         raise HttpError(400, "Unsupported media host.")
 
     auth = build_auth_params(_creds_for_id(payload.get("u")))
