@@ -14,6 +14,7 @@
 	import { REGION_LABELS } from '$lib/regions';
 	import FavoriteButton from '$lib/components/favorites/FavoriteButton.svelte';
 	import MetadataCard from '$lib/components/metadata/MetadataCard.svelte';
+	import MetadataLoadingCard from '$lib/components/metadata/MetadataLoadingCard.svelte';
 	import DownloadQueueRow from '$lib/components/downloads/DownloadQueueRow.svelte';
 
 	let slug = $derived(page.params.slug ?? '');
@@ -22,6 +23,7 @@
 	let links = $state<CatalogLink[]>([]);
 	let platforms = $state<Platform[]>([]);
 	let metadata = $state<GameMetadata | null>(null);
+	let metadataLoading = $state(false);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let enqueuingLinkId = $state<number | null>(null);
@@ -57,14 +59,28 @@
 			links = linksResult;
 			platforms = platformsResult;
 			libraryApi.recordRecentlyViewed(slug).catch(() => {});
-			// Eager but non-blocking, and silent on failure — mirrors the
-			// original app's metadata card just not appearing rather than
-			// showing a spinner/error state.
+			// Eager but non-blocking, and still silent on *failure* — a source
+			// being down should leave the card absent, not show an error. It
+			// does now announce itself while in flight, because scraping two
+			// remote sources takes long enough that an entry looked finished
+			// and metadata-less until it suddenly wasn't.
+			//
+			// Guarded on the slug: load() re-runs on every navigation, so
+			// without this a slow request for the entry you just left would
+			// resolve afterwards and either overwrite the new entry's
+			// metadata or switch its spinner off early.
+			const requestedSlug = slug;
 			metadata = null;
+			metadataLoading = true;
 			metadataApi
 				.entry(slug)
-				.then((result) => (metadata = result))
-				.catch(() => {});
+				.then((result) => {
+					if (requestedSlug === slug) metadata = result;
+				})
+				.catch(() => {})
+				.finally(() => {
+					if (requestedSlug === slug) metadataLoading = false;
+				});
 		} catch (err) {
 			error = err instanceof ApiError ? err.message : 'Failed to load this entry.';
 		} finally {
@@ -142,7 +158,9 @@
 				{/if}
 			</div>
 
-			{#if metadata && (metadata.description || metadata.screenshots.length || metadata.artwork.length)}
+			{#if metadataLoading}
+				<MetadataLoadingCard />
+			{:else if metadata && (metadata.description || metadata.screenshots.length || metadata.artwork.length)}
 				<MetadataCard {metadata} />
 			{/if}
 
