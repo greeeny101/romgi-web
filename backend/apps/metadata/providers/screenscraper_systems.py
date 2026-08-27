@@ -1,6 +1,12 @@
-"""Ports lib/services/metadata/screenscraper_systems.dart verbatim.
-Unconfirmed systemeids are omitted; a missing platform skips ScreenScraper
-(see ScreenScraperProvider.fetch)."""
+"""Ports lib/services/metadata/screenscraper_systems.dart, plus the platforms
+romgi's catalog carries that the Dart original never mapped. Unconfirmed
+systemeids are omitted; a missing platform skips ScreenScraper entirely
+(see ScreenScraperProvider.fetch), so it can only ever show SteamGridDB
+artwork - no description and no screenshots.
+
+Every id here is confirmed against api2/systemesListe.php rather than
+guessed. ScreenScraper's systems are coarser than the catalog's platforms
+in places, so several of ours legitimately share one id."""
 
 SCREENSCRAPER_SYSTEM_IDS: dict[str, int] = {
     "nes": 3,
@@ -47,4 +53,17 @@ SCREENSCRAPER_SYSTEM_IDS: dict[str, int] = {
     "3do": 29,
     "cdi": 133,
     "ngcd": 70,
+    # --- Platforms the Dart original never mapped ---------------------------
+    # ScreenScraper folds these into a system it already has, so they share an
+    # id with a platform above rather than getting one of their own. Confirmed
+    # from systemesListe.php, where each id's alias list names them outright.
+    "fbneo": 75,  # "Mame" - its aliases include fba, fba_libretro and fbneo
+    "dsi": 15,  # "Nintendo DS" - aliases include Nintendo DSi, NDSi, DSi
+    "n3ds": 17,  # "Nintendo 3DS" - there is no separate New 3DS system
+    # ...and these are systems of their own that simply were not ported.
+    "fmt": 253,  # FM Towns
+    "pc98": 208,  # NEC PC-9801
+    # Deliberately still absent: "pip" (Apple Pippin). ScreenScraper has no
+    # Pippin system at all - searching its 250 systems for "pippin", "bandai"
+    # and "apple" turns up nothing - so there is no id to map it to.
 }
