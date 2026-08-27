@@ -7,6 +7,7 @@ obtain was never going to work. This is the same arrangement Batocera uses
 (its pair is compiled into EmulationStation via -DSCREENSCRAPER_DEV_LOGIN)
 and is why Batocera appears to scrape from a username and password alone."""
 
+import time
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import requests
@@ -45,6 +46,38 @@ _DEV_REJECTED = (
     "ScreenScraper rejected this instance's developer credentials — check "
     "SCREENSCRAPER_DEV_ID and SCREENSCRAPER_DEV_PASSWORD on the server."
 )
+
+
+# ScreenScraper's servers are frequently slow enough to hit the read timeout
+# outright — two of seven calls timed out during a single test run — so one
+# attempt makes scraping flaky in a way that presents as missing data rather
+# than as a slow server.
+RETRY_ATTEMPTS = 2
+RETRY_BACKOFF = 1.0
+# Total wall-clock budget for one call including its retry. get_metadata runs
+# synchronously inside GET /metadata/entries/{slug} on page load, and both
+# providers are tried in sequence, so an unbounded retry would hang the page
+# rather than merely slow it. A retry is skipped, not started, when there is
+# no room left in the budget.
+RETRY_BUDGET = 45.0
+
+
+def _get(path: str, params: dict) -> requests.Response:
+    """Retries connection and timeout failures only. An HTTP status is an
+    answer — repeating a request that got one would spend the account's
+    thread allowance (429 is a documented response) to be told the same
+    thing twice."""
+    deadline = time.monotonic() + RETRY_BUDGET
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        try:
+            return requests.get(f"{BASE_URL}/{path}", params=params, timeout=TIMEOUT)
+        except (requests.Timeout, requests.ConnectionError):
+            out_of_attempts = attempt >= RETRY_ATTEMPTS
+            out_of_time = time.monotonic() + RETRY_BACKOFF >= deadline
+            if out_of_attempts or out_of_time:
+                raise
+            time.sleep(RETRY_BACKOFF)
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 def build_auth_params(creds: dict) -> dict:
@@ -200,7 +233,7 @@ class ScreenScraperProvider(MetadataProvider):
         if missing:
             return missing
         try:
-            resp = requests.get(f"{BASE_URL}/ssuserInfos.php", params=build_auth_params(creds), timeout=TIMEOUT)
+            resp = _get("ssuserInfos.php", build_auth_params(creds))
         except requests.RequestException:
             return "Could not reach ScreenScraper"
         if resp.status_code == 200:
@@ -234,11 +267,12 @@ class ScreenScraperProvider(MetadataProvider):
             return MetadataError(missing, auth_error=True)
 
         try:
-            resp = requests.get(
-                f"{BASE_URL}/jeuRecherche.php",
-                params={**build_auth_params(creds), "systemeid": system_id, "recherche": title},
-                timeout=TIMEOUT,
+            resp = _get(
+                "jeuRecherche.php",
+                {**build_auth_params(creds), "systemeid": system_id, "recherche": title},
             )
+        except (requests.Timeout, requests.ConnectionError):
+            return MetadataError(f"ScreenScraper did not respond ({RETRY_ATTEMPTS} attempts)")
         except requests.RequestException as exc:
             return MetadataError(str(exc) or "ScreenScraper request failed")
 

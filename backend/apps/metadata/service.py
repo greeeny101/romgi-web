@@ -75,11 +75,13 @@ def get_metadata(user, title: str, platform: str) -> MetadataFound | None:
     screenshots: list[MediaItem] = []
     artwork: list[MediaItem] = []
     any_answered = False
+    any_failed = False
 
     for provider, creds in configured:
         try:
             result = provider.fetch(clean, platform, creds)
         except Exception:
+            any_failed = True
             continue
         if isinstance(result, MetadataFound):
             any_answered = True
@@ -90,12 +92,22 @@ def get_metadata(user, title: str, platform: str) -> MetadataFound | None:
         elif isinstance(result, MetadataNoMatch):
             any_answered = True
         elif isinstance(result, MetadataError):
-            continue  # never counts as an answer — errors are never cached
+            any_failed = True  # never counts as an answer — errors are never cached
 
     if not any_answered:
         return None
 
     is_empty = not description and not screenshots and not artwork
+
+    if any_failed:
+        # "Errors are never cached" only held when *every* provider errored.
+        # With one answering and another failing, this wrote the half of the
+        # result that came back and served it for the full 14-day hit TTL —
+        # so a single ScreenScraper timeout froze an entry with SteamGridDB
+        # artwork and no description for a fortnight. Return what we have for
+        # this request, but leave the cache alone so the next view retries.
+        return None if is_empty else MetadataFound(description=description, screenshots=screenshots, artwork=artwork)
+
     GameMetadataCache.objects.update_or_create(
         cache_key=cache_key,
         defaults={
