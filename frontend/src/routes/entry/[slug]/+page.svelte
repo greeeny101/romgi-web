@@ -122,19 +122,27 @@
 	<ErrorView message={error} onRetry={load} />
 {:else if entry}
 	<div class="flex flex-col gap-6 sm:flex-row">
-		<div class="relative flex aspect-[3/4] w-full max-w-xs shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gray-100 dark:bg-gray-800">
+		<div class="w-full max-w-xs shrink-0">
 			{#if entry.boxart_url}
-				<!-- Same contain-plus-blurred-backdrop treatment as RomGridCard: box art ratios
-				     vary by source, so the cover is shown whole and the blur fills the rest. -->
+				<!-- Unlike RomGridCard, this is not locked to a 3/4 box with a blurred
+				     backdrop filling the leftover. A grid needs every tile the same
+				     shape to line up; one cover on its own does not, and forcing a
+				     portrait ratio meant near-square art (Dreamcast, most CD cases)
+				     showed more blur than cover. The image sets its own height, so
+				     the container is only ever as tall as the art itself.
+				     max-h keeps a rare very tall cover from dwarfing the page. -->
 				<img
 					src={entry.boxart_url}
-					alt=""
-					aria-hidden="true"
-					class="pointer-events-none absolute inset-0 h-full w-full scale-110 object-cover blur-xl brightness-75 dark:brightness-50"
+					alt={entry.title}
+					class="max-h-[32rem] w-full rounded-lg object-contain"
 				/>
-				<img src={entry.boxart_url} alt={entry.title} class="relative h-full w-full object-contain p-1" />
 			{:else}
-				<ImageOutline class="h-16 w-16 text-gray-300 dark:text-gray-600" />
+				<!-- No image to give the box a height, so the placeholder keeps a shape. -->
+				<div
+					class="flex aspect-[3/4] w-full items-center justify-center rounded-lg bg-gray-100 dark:bg-gray-800"
+				>
+					<ImageOutline class="h-16 w-16 text-gray-300 dark:text-gray-600" />
+				</div>
 			{/if}
 		</div>
 
