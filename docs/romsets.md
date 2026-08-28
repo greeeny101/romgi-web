@@ -51,5 +51,6 @@ stays selected regardless of the new request. Removing files is a filesystem
 operation you do yourself, never a side effect of asking for a different part
 of a set.
 
-Where the library folder lives on the host is set by `ROM_LIBRARY_HOST_PATH` —
-see [Installation](installation.md#the-library-folder).
+Where the library folder lives on the host is set by `ROM_LIBRARY_HOST_PATH`
+in the root `.env`, and it has no default — the stack won't start without it.
+See [Installation](installation.md#the-library-folder).

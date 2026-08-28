@@ -1,6 +1,14 @@
 # Claude Code session/tool state — local to this machine, never shared.
 .claude/
 
+# Host storage paths for Docker Compose — machine-specific by definition.
+# .env.example is the committed template. (backend/.env has its own rule in
+# backend/.gitignore.)
+/.env
+
+# Default location for bind-mounted volumes, if .env points them here.
+/data/
+
 # OS cruft
 .DS_Store
 Thumbs.db
@@ -12,3 +20,4 @@ Thumbs.db
 # absolute local path and isn't meant as polished public documentation
 # (README.md and KNOWN_ISSUES.md supersede it). Kept locally, not published.
 /the-code-in-romgi-concurrent-kahan.md
+backend/config/settings/local.py

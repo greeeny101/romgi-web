@@ -5,6 +5,7 @@ Shared settings. Never import this directly — use `development` or
 
 from datetime import timedelta
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 import environ
 
@@ -114,10 +115,33 @@ CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[])
 CORS_EXPOSE_HEADERS = ["Content-Disposition"]
 
 # --- Redis / Celery -----------------------------------------------------
+# One Redis server, three logical databases in use: 1 Celery, 2 Channels,
+# 3 cache. Set REDIS_URL alone and all three derive from it — note its own db
+# index is only a placeholder, nothing ever connects to it, so pointing
+# REDIS_URL at a different db does NOT shift the other three.
+#
+# Set any of them explicitly to override the derivation. Needed for a
+# non-default db layout (a shared Redis where 1/2/3 are already spoken for),
+# or when REDIS_URL isn't a redis:// URL — a unix:// socket can't be derived
+# from, since _redis_db rewrites the URL path.
 REDIS_URL = env.str("REDIS_URL", default="redis://localhost:6379/0")
 
-CELERY_BROKER_URL = env.str("CELERY_BROKER_URL", default=f"{REDIS_URL.rstrip('/0')}/1")
-CELERY_RESULT_BACKEND = env.str("CELERY_RESULT_BACKEND", default=f"{REDIS_URL.rstrip('/0')}/1")
+
+def _redis_db(url: str, db: int) -> str:
+    """Same Redis server, different logical database.
+
+    Deliberately not `url.rstrip('/0')`: rstrip strips a character *set*, not
+    a suffix, so any port ending in 0 loses its last digit —
+    `redis://host:6380/0` became `redis://host:638`, pointing Celery, the
+    cache and the channel layer at a server that doesn't exist. 6380 is the
+    port this project publishes Redis on, so that was not hypothetical.
+    """
+    parts = urlsplit(url)
+    return urlunsplit(parts._replace(path=f"/{db}"))
+
+
+CELERY_BROKER_URL = env.str("CELERY_BROKER_URL", default=_redis_db(REDIS_URL, 1))
+CELERY_RESULT_BACKEND = env.str("CELERY_RESULT_BACKEND", default=_redis_db(REDIS_URL, 1))
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
@@ -157,7 +181,7 @@ CELERY_TASK_ROUTES = {
 CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.redis.RedisCache",
-        "LOCATION": env.str("CACHE_URL", default=f"{REDIS_URL.rstrip('/0')}/3"),
+        "LOCATION": env.str("CACHE_URL", default=_redis_db(REDIS_URL, 3)),
     },
 }
 
@@ -166,7 +190,7 @@ CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [env.str("CHANNELS_REDIS_URL", default=f"{REDIS_URL.rstrip('/0')}/2")],
+            "hosts": [env.str("CHANNELS_REDIS_URL", default=_redis_db(REDIS_URL, 2))],
         },
     },
 }

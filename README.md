@@ -66,8 +66,14 @@ A per-app breakdown of the tree is in [docs/development.md](docs/development.md#
 Requires Docker and Docker Compose.
 
 ```bash
-cp backend/.env.example backend/.env
+cp .env.example .env                    # where files land on the host
+cp backend/.env.example backend/.env    # application config
 ```
+
+Set `ROM_LIBRARY_HOST_PATH` in `.env` to an absolute path to an existing
+folder — it's where downloaded ROM sets land, it has no default, and
+`docker compose up` refuses to start without it. The rest of that file is
+optional; see [docs/installation.md](docs/installation.md#where-files-are-stored).
 
 Set two values in `backend/.env`:
 
@@ -109,15 +115,14 @@ The catalog starts empty — ingest a source to fill it:
 docker compose exec django python manage.py ingest_catalog --sources mariocube
 ```
 
-Two more setup steps matter before torrents work (qBittorrent's first-boot
-password) and before downloads land somewhere you can reach them (the library
-bind mount) — both are in [docs/installation.md](docs/installation.md).
+One more setup step matters before torrents work — qBittorrent's first-boot
+password — in [docs/installation.md](docs/installation.md).
 
 ## Documentation
 
 | | |
 |---|---|
-| [Installation](docs/installation.md) | Full configuration, first account, qBittorrent handshake, loading a catalog |
+| [Installation](docs/installation.md) | Full configuration, using existing Postgres/Redis/qBittorrent servers, first account, loading a catalog |
 | [Development](docs/development.md) | Running backend/frontend on the host, VS Code debug configs, tests, code layout |
 | [ROM sets](docs/romsets.md) | How whole-romset downloads work, and the disk-space rules that govern them |
 | [Deployment](docs/deployment.md) | Production settings and the auth model |

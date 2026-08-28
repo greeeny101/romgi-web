@@ -1,4 +1,32 @@
 {
+	// Connection settings come from backend/.env via "envFile" rather than being
+	// repeated in every config below. That file is gitignored, so credentials
+	// stay out of this one (launch.json IS tracked), and there's a single place
+	// to change when a server moves.
+	//
+	// This works because Postgres and Redis are external hosts reachable from
+	// this machine directly. If you switch back to the bundled containers, their
+	// backend/.env values are Docker service names ("postgres", "redis") that
+	// don't resolve here — add per-config overrides for the published ports
+	// (localhost:5434 / localhost:6380) in the "env" block below.
+	//
+	// Three variables ARE overridden, because they legitimately mean different
+	// things on the host than in a container:
+	//
+	//   QBITTORRENT_HOST     backend/.env names the "qbittorrent" Compose
+	//                        service, which the host can't resolve; Compose
+	//                        publishes the same WebUI on localhost:8080.
+	//   STAGED_FILES_DIR     backend/.env has these as paths RELATIVE to the
+	//   TORRENT_WORKING_DIR  process's working directory — "/app" in a
+	//                        container (bind-mounted to the share), but
+	//                        "backend/" here. Left alone, a host worker stages
+	//                        downloads onto the internal disk where the
+	//                        containers can't see them, and can't find what a
+	//                        container wrote. Pinned to the same absolute
+	//                        paths the root .env's *_HOST_PATH vars bind.
+	//                        Update these if those move.
+	//
+	// Note "env" wins over "envFile" where both set the same variable.
 	"version": "0.2.0",
 	"configurations": [
 		{
@@ -10,16 +38,13 @@
 			"cwd": "${workspaceFolder}/backend",
 			"python": "${workspaceFolder}/backend/.venv/bin/python",
 			"justMyCode": false,
+			"envFile": "${workspaceFolder}/backend/.env",
 			"env": {
 				"DJANGO_SETTINGS_MODULE": "config.settings.development",
-				"DATABASE_URL": "postgres://romgi:romgi@localhost:5434/romgi",
-				"REDIS_URL": "redis://localhost:6380/0",
-				"CELERY_BROKER_URL": "redis://localhost:6380/1",
-				"CELERY_RESULT_BACKEND": "redis://localhost:6380/1",
-				"CHANNELS_REDIS_URL": "redis://localhost:6380/2",
-				"QBITTORRENT_HOST": "http://localhost:8080"
+				"QBITTORRENT_HOST": "http://localhost:8080",
+				"STAGED_FILES_DIR": "/Volumes/Emulation/romgi/data/staged",
+				"TORRENT_WORKING_DIR": "/Volumes/Emulation/romgi/data/torrents"
 			},
-			"preLaunchTask": "Start Postgres + Redis"
 		},
 		{
 			"name": "Celery: Worker (debug, solo pool)",
@@ -35,16 +60,13 @@
 			"cwd": "${workspaceFolder}/backend",
 			"python": "${workspaceFolder}/backend/.venv/bin/python",
 			"justMyCode": false,
+			"envFile": "${workspaceFolder}/backend/.env",
 			"env": {
 				"DJANGO_SETTINGS_MODULE": "config.settings.development",
-				"DATABASE_URL": "postgres://romgi:romgi@localhost:5434/romgi",
-				"REDIS_URL": "redis://localhost:6380/0",
-				"CELERY_BROKER_URL": "redis://localhost:6380/1",
-				"CELERY_RESULT_BACKEND": "redis://localhost:6380/1",
-				"CHANNELS_REDIS_URL": "redis://localhost:6380/2",
-				"QBITTORRENT_HOST": "http://localhost:8080"
+				"QBITTORRENT_HOST": "http://localhost:8080",
+				"STAGED_FILES_DIR": "/Volumes/Emulation/romgi/data/staged",
+				"TORRENT_WORKING_DIR": "/Volumes/Emulation/romgi/data/torrents"
 			},
-			"preLaunchTask": "Start Postgres + Redis"
 		},
 		{
 			"name": "Celery: Beat",
@@ -59,14 +81,10 @@
 			"cwd": "${workspaceFolder}/backend",
 			"python": "${workspaceFolder}/backend/.venv/bin/python",
 			"justMyCode": false,
+			"envFile": "${workspaceFolder}/backend/.env",
 			"env": {
-				"DJANGO_SETTINGS_MODULE": "config.settings.development",
-				"DATABASE_URL": "postgres://romgi:romgi@localhost:5434/romgi",
-				"REDIS_URL": "redis://localhost:6380/0",
-				"CELERY_BROKER_URL": "redis://localhost:6380/1",
-				"CELERY_RESULT_BACKEND": "redis://localhost:6380/1"
+				"DJANGO_SETTINGS_MODULE": "config.settings.development"
 			},
-			"preLaunchTask": "Start Postgres + Redis"
 		},
 		{
 			"name": "Django: Migrate",
@@ -78,12 +96,10 @@
 			"python": "${workspaceFolder}/backend/.venv/bin/python",
 			"django": true,
 			"justMyCode": false,
+			"envFile": "${workspaceFolder}/backend/.env",
 			"env": {
-				"DJANGO_SETTINGS_MODULE": "config.settings.development",
-				"DATABASE_URL": "postgres://romgi:romgi@localhost:5434/romgi",
-				"REDIS_URL": "redis://localhost:6380/0"
+				"DJANGO_SETTINGS_MODULE": "config.settings.development"
 			},
-			"preLaunchTask": "Start Postgres + Redis"
 		},
 		{
 			"name": "Django: Shell",
@@ -96,12 +112,13 @@
 			"django": true,
 			"justMyCode": false,
 			"console": "integratedTerminal",
+			"envFile": "${workspaceFolder}/backend/.env",
 			"env": {
 				"DJANGO_SETTINGS_MODULE": "config.settings.development",
-				"DATABASE_URL": "postgres://romgi:romgi@localhost:5434/romgi",
-				"REDIS_URL": "redis://localhost:6380/0"
+				"QBITTORRENT_HOST": "http://localhost:8080",
+				"STAGED_FILES_DIR": "/Volumes/Emulation/romgi/data/staged",
+				"TORRENT_WORKING_DIR": "/Volumes/Emulation/romgi/data/torrents"
 			},
-			"preLaunchTask": "Start Postgres + Redis"
 		},
 		{
 			"name": "Django: Setup Periodic Tasks",
@@ -113,12 +130,10 @@
 			"python": "${workspaceFolder}/backend/.venv/bin/python",
 			"django": true,
 			"justMyCode": false,
+			"envFile": "${workspaceFolder}/backend/.env",
 			"env": {
-				"DJANGO_SETTINGS_MODULE": "config.settings.development",
-				"DATABASE_URL": "postgres://romgi:romgi@localhost:5434/romgi",
-				"REDIS_URL": "redis://localhost:6380/0"
+				"DJANGO_SETTINGS_MODULE": "config.settings.development"
 			},
-			"preLaunchTask": "Start Postgres + Redis"
 		},
 		{
 			"name": "Django: Ingest Catalog (MarioCube)",
@@ -130,12 +145,10 @@
 			"python": "${workspaceFolder}/backend/.venv/bin/python",
 			"django": true,
 			"justMyCode": false,
+			"envFile": "${workspaceFolder}/backend/.env",
 			"env": {
-				"DJANGO_SETTINGS_MODULE": "config.settings.development",
-				"DATABASE_URL": "postgres://romgi:romgi@localhost:5434/romgi",
-				"REDIS_URL": "redis://localhost:6380/0"
+				"DJANGO_SETTINGS_MODULE": "config.settings.development"
 			},
-			"preLaunchTask": "Start Postgres + Redis"
 		},
 		{
 			"name": "SvelteKit: Dev Server",

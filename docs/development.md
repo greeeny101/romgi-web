@@ -52,18 +52,18 @@ see the comment in `pyproject.toml`. Production installs use
 `uv sync --no-default-groups --extra production` instead, which is what the
 `Dockerfile` does for a prod image build.)
 
-`backend/.env`'s default `DATABASE_URL`/`REDIS_URL`/etc. use Docker service
-names (`postgres`, `redis`), which only resolve *inside* the Compose
-network. Running the backend directly on the host instead, override them
-to the host-mapped ports (see the comment above `DATABASE_URL` in
-`backend/.env.example` for the exact values — `localhost:5434`/`:6380`).
+`backend/.env`'s default `DATABASE_URL`/`REDIS_URL` use Docker service names
+(`postgres`, `redis`), which only resolve *inside* the Compose network.
+Running the backend directly on the host instead, override them to the
+host-mapped ports — `localhost:5434` and `localhost:6380` by default, or
+whatever you set `POSTGRES_PORT`/`REDIS_PORT` to in the root `.env`.
+
+Only `REDIS_URL` needs setting: the Celery, Channels and cache URLs derive
+from it (`_redis_db` in `config/settings/base.py`).
 
 ```bash
 export DATABASE_URL="postgres://romgi:romgi@localhost:5434/romgi"
 export REDIS_URL="redis://localhost:6380/0"
-export CELERY_BROKER_URL="redis://localhost:6380/1"
-export CELERY_RESULT_BACKEND="redis://localhost:6380/1"
-export CHANNELS_REDIS_URL="redis://localhost:6380/2"
 export DJANGO_SETTINGS_MODULE=config.settings.development
 
 python manage.py migrate
@@ -86,6 +86,31 @@ celery -A config worker -l info -Q celery,downloads,torrents,romsets,credentials
 celery -A config beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
 ```
 
+> **Stop the Compose workers first.** Unlike daphne, a Celery worker binds no
+> port, so nothing stops a host worker running *alongside* the containerised
+> ones — and both subscribe to the same Redis queues. Redis then hands each
+> task to whichever worker grabs it first, so the steps of one download get
+> split across two machines with different filesystem views. It fails as a
+> bare `[Errno 2] No such file or directory` on a staged file that another
+> worker wrote somewhere the first one can't see, and the traceback appears in
+> neither log you're watching.
+>
+> ```bash
+> docker compose stop celery-worker celery-worker-torrents celery-worker-romsets \
+>                     celery-worker-ingestion celery-worker-external celery-beat
+> ```
+>
+> `docker compose start <same list>` puts them back. The same applies to any
+> mix of host and container workers — run one set or the other, never both.
+
+Paths are the other half of this. `STAGED_FILES_DIR` and `TORRENT_WORKING_DIR`
+default to *relative* paths (`./data/staged`), which resolve against the
+process's working directory — `/app` in a container, `backend/` on the host.
+Those are different directories, so a host worker will not find what a
+container wrote. If the Compose stack stores them somewhere else (see
+`*_HOST_PATH` in the root `.env`), override both to that absolute host path
+when running on the host.
+
 **Frontend:**
 
 ```bash
@@ -99,10 +124,15 @@ npm run dev
 
 `.vscode/launch.json` wraps all of the above into one-click debug configs
 (breakpoints work in Python and, via the Chrome config, in `.svelte`/`.ts`
-files too). They all assume Postgres + Redis are reachable at the
-host-mapped ports above — the Python configs' `preLaunchTask` starts them
-via Docker automatically (`.vscode/tasks.json`), so you don't need to run
-`docker compose up -d postgres redis` yourself first.
+files too). The Python configs load `backend/.env` via `envFile`, so they
+connect to whatever Postgres and Redis that file points at — no separate
+copy of the connection strings to keep in sync. Only `QBITTORRENT_HOST` is
+overridden per-config, because the containers reach the daemon by its Compose
+service name and the host can't resolve that.
+
+If `backend/.env` names Compose service names (`postgres`, `redis`) rather
+than reachable hosts, those won't resolve from the host — start the bundled
+services and override the two URLs to the host-mapped ports, as above.
 
 | Config | What it runs |
 |---|---|
@@ -117,7 +147,9 @@ Two **compounds** start several of these together with one click:
 `Full Stack (Daphne + Celery + Frontend)` and
 `Frontend: Dev Server + Chrome Debugger`.
 
-**Stop the debug worker when you're done.** It consumes the same Redis queues
+**Stop the debug worker when you're done** — and stop the Compose workers
+before you start it (see the warning under *Manual / local development*
+above). It consumes the same Redis queues
 as the Compose `celery-worker*` services, so leaving it running means the two
 compete for every task — and because it runs whatever code was on disk when
 it started, it will fail tasks it doesn't recognise (`Received unregistered
@@ -125,9 +157,13 @@ task of type ...`) while the Docker workers sit idle. A debug worker left
 running overnight looks exactly like a broken feature.
 
 Torrent work needs qBittorrent too, which none of these start by default
-(most day-to-day work doesn't need it) — run the
-**Start Postgres + Redis + qBittorrent** task manually first
-(⇧⌘P → "Tasks: Run Task"), or `docker compose up -d qbittorrent`.
+(most day-to-day work doesn't need it) — `docker compose up -d qbittorrent`.
+
+The tasks in `.vscode/tasks.json` predate the `COMPOSE_PROFILES` switch and
+still run `docker compose up -d postgres redis`. Naming a service explicitly
+auto-enables its profile, so those tasks will start bundled Postgres/Redis
+containers even when you've profiled them out in favour of external servers —
+containers nothing then connects to. Don't run them in that setup.
 
 If port 5173 is already taken (e.g. by another project), Vite will pick a
 different port automatically — update the Chrome config's `url` to match

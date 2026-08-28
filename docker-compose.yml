@@ -1,26 +1,34 @@
 name: romgi-web
 
 services:
+  # Drop "local-postgres" from COMPOSE_PROFILES to skip this container and
+  # point DATABASE_URL (in backend/.env) at a database server you already run.
   postgres:
     image: postgres:16
+    profiles: ["local-postgres"]
     environment:
       POSTGRES_USER: romgi
       POSTGRES_PASSWORD: romgi
       POSTGRES_DB: romgi
     ports:
-      - "127.0.0.1:5434:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5434}:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ${POSTGRES_DATA_HOST_PATH:-postgres_data}:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U romgi"]
       interval: 5s
       timeout: 5s
       retries: 10
 
+  # Drop "local-redis" from COMPOSE_PROFILES to skip this container and point
+  # REDIS_URL (in backend/.env) at a Redis server you already run. That one
+  # variable is enough — the Celery, Channels and cache URLs derive from it,
+  # see the _redis_db helper in config/settings/base.py.
   redis:
     image: redis:7
+    profiles: ["local-redis"]
     ports:
-      - "127.0.0.1:6380:6379"
+      - "127.0.0.1:${REDIS_PORT:-6380}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -39,16 +47,32 @@ services:
       DJANGO_SETTINGS_MODULE: config.settings.development
     volumes:
       - ./backend:/app
-      - staged_files:/app/data/staged
-      - torrent_data:/app/data/torrents
+      - ${STAGED_FILES_HOST_PATH:-staged_files}:/app/data/staged
+      - ${TORRENT_DATA_HOST_PATH:-torrent_data}:/app/data/torrents
       - rom_library:/app/data/library
     ports:
       - "127.0.0.1:8001:8000"
+    # Without a restart policy this container gives up permanently the first
+    # time `manage.py migrate` can't reach the database. That never happened
+    # while postgres was mandatory — the service_healthy gate below guaranteed
+    # it was up first — but an external DATABASE_URL has no such gate, and a
+    # server that's a few seconds behind would otherwise leave the API dead
+    # until someone ran `up` again by hand.
+    restart: unless-stopped
+    # `required: false` on both conditions below is what lets postgres/redis be
+    # profiled out at all: a depends_on naming a service that isn't in an
+    # active profile is a hard error ("depends on undefined service"), taking
+    # the whole project down rather than just that dependency. With it, the
+    # health gate still applies whenever the bundled service IS running, and is
+    # simply skipped when you've pointed at your own server instead. Repeated
+    # on every service below for the same reason.
     depends_on:
       postgres:
         condition: service_healthy
+        required: false
       redis:
         condition: service_healthy
+        required: false
 
   # Per-queue workers, matching CELERY_TASK_ROUTES in config/settings/base.py.
   # A single unqualified `celery worker` only consumes Celery's implicit
@@ -66,13 +90,15 @@ services:
       DJANGO_SETTINGS_MODULE: config.settings.development
     volumes:
       - ./backend:/app
-      - staged_files:/app/data/staged
-      - torrent_data:/app/data/torrents
+      - ${STAGED_FILES_HOST_PATH:-staged_files}:/app/data/staged
+      - ${TORRENT_DATA_HOST_PATH:-torrent_data}:/app/data/torrents
     depends_on:
       postgres:
         condition: service_healthy
+        required: false
       redis:
         condition: service_healthy
+        required: false
 
   # Dedicated so qBittorrent's frequent poll_active_torrents ticks never
   # queue behind a slow HTTP download or ingestion scrape.
@@ -86,14 +112,16 @@ services:
       DJANGO_SETTINGS_MODULE: config.settings.development
     volumes:
       - ./backend:/app
-      - staged_files:/app/data/staged
-      - torrent_data:/app/data/torrents
+      - ${STAGED_FILES_HOST_PATH:-staged_files}:/app/data/staged
+      - ${TORRENT_DATA_HOST_PATH:-torrent_data}:/app/data/torrents
       - rom_library:/app/data/library
     depends_on:
       postgres:
         condition: service_healthy
+        required: false
       redis:
         condition: service_healthy
+        required: false
 
   # ROM-set extraction only. Unpacking a 5-20GB archive occupies its worker
   # for minutes at a time, so it must not share the torrents queue with the
@@ -113,8 +141,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+        required: false
       redis:
         condition: service_healthy
+        required: false
 
   # Long-running, low-concurrency catalog scrapes — isolated so a big
   # ingestion run can't starve user-facing downloads.
@@ -131,8 +161,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+        required: false
       redis:
         condition: service_healthy
+        required: false
 
   # External-API-bound (IA login/revalidate, ScreenScraper/SteamGridDB) —
   # network-latency-heavy, doesn't need the download pipeline's volumes.
@@ -149,8 +181,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+        required: false
       redis:
         condition: service_healthy
+        required: false
 
   celery-beat:
     build:
@@ -165,11 +199,19 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+        required: false
       redis:
         condition: service_healthy
+        required: false
 
+  # Drop "local-qbittorrent" from COMPOSE_PROFILES to skip this container and
+  # point QBITTORRENT_HOST (in backend/.env) at a daemon you already run.
+  # Unlike postgres/redis there's a catch: the download pipeline reads finished
+  # files back off disk, so an external daemon has to save them somewhere this
+  # stack can also read. See docs/installation.md#using-existing-servers.
   qbittorrent:
     image: linuxserver/qbittorrent:latest
+    profiles: ["local-qbittorrent"]
     environment:
       PUID: 1000
       PGID: 1000
@@ -196,8 +238,8 @@ services:
       # fails to authenticate, and qBittorrent bans the caller's IP for
       # trying too often — which surfaces as ROM sets and torrent downloads
       # failing with "Your IP address has been banned".
-      - qbittorrent_config:/config
-      - torrent_data:/downloads
+      - ${QBITTORRENT_CONFIG_HOST_PATH:-qbittorrent_config}:/config
+      - ${TORRENT_DATA_HOST_PATH:-torrent_data}:/downloads
       # ROM sets are saved straight into the library rather than downloaded
       # here and copied afterwards — a 20GB copy between two volumes at the
       # end of every set would double both the time and the peak disk use.
@@ -227,6 +269,18 @@ services:
     depends_on:
       - django
 
+# These four stay Docker-managed named volumes by default, but each service
+# mount above reads a *_HOST_PATH variable first, so any of them can be moved
+# onto a real host folder without editing this file. See .env.example.
+#
+# Compose decides bind-vs-volume by the *shape* of the left-hand side: a bare
+# name is a named volume, anything containing a slash is a bind mount. So an
+# override must be an absolute path or start with ./ — a bare name like
+# `staged` is read as a volume reference and Compose refuses the project with
+# "refers to undefined volume staged", since it isn't declared below.
+#
+# A volume declared here but overridden to a path just goes unused; Compose
+# doesn't mind. Keep all four declared so the unset default still resolves.
 volumes:
   postgres_data:
   staged_files:
@@ -238,14 +292,24 @@ volumes:
   # Docker VM, where Finder can't reach it and the only way to get a 5GB set
   # out is `docker compose cp`.
   #
-  # Point it wherever you want sets to land (a NAS share, the folder your
-  # cabinet reads) by setting ROM_LIBRARY_HOST_PATH in a .env file next to
-  # this one. Must be an ABSOLUTE path — the bind driver won't resolve a
-  # relative one — must exist before `up`, and if it's a network mount it
-  # must be mounted, or the containers won't start.
+  # ROM_LIBRARY_HOST_PATH is REQUIRED — `:?` aborts the whole stack before
+  # anything starts if it's unset or empty. There is deliberately no default:
+  # a library is the one thing you can't guess a location for, and quietly
+  # filling somebody's home directory with tens of gigabytes is worse than
+  # refusing to boot.
+  #
+  # It also keeps the driver_opts form rather than the ${VAR:-name} shorthand
+  # the four above use. That's the point of it: the local bind driver FAILS
+  # when `device` doesn't exist, where shorthand would silently create the
+  # directory. If your library is a network mount that isn't mounted yet, you
+  # want the loud failure — not 20GB written into an empty local folder that
+  # the real share then hides when it does mount.
+  #
+  # So: an ABSOLUTE path (the bind driver won't resolve a relative one) that
+  # already exists, and is actually mounted if it's a network share.
   rom_library:
     driver: local
     driver_opts:
       type: none
       o: bind
-      device: ${ROM_LIBRARY_HOST_PATH:-/Users/marcgreenwood/roms}
+      device: ${ROM_LIBRARY_HOST_PATH:?set ROM_LIBRARY_HOST_PATH in a .env next to docker-compose.yml - an absolute path to an existing folder where ROM sets should land. See .env.example.}

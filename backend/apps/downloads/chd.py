@@ -45,13 +45,21 @@ def find_disc_sheet(directory: str) -> str | None:
     Picks the largest when there are several: a multi-disc archive can carry
     one sheet per disc, and the biggest is the one listing the most tracks.
     Ties break on name so the choice is stable across runs.
+
+    AppleDouble companions ("._name.cue") are skipped explicitly. macOS writes
+    them next to every real file on filesystems without native resource-fork
+    support — SMB shares, exFAT — and they are a fixed 4096 bytes, which is
+    larger than any real cue sheet (a two-track sheet is ~240 bytes). Without
+    this guard the "largest wins" rule reliably picks the metadata stub, and
+    chdman then blocks parsing 4KB of binary as a cue sheet until the
+    conversion timeout an hour later. Confirmed live on an SMB-staged rip.
     """
     if not os.path.isdir(directory):
         return None
     sheets = [
         os.path.join(directory, name)
         for name in os.listdir(directory)
-        if name.lower().endswith(DISC_SHEET_EXTENSIONS)
+        if name.lower().endswith(DISC_SHEET_EXTENSIONS) and not name.startswith("._")
     ]
     if not sheets:
         return None
