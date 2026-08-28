@@ -52,15 +52,15 @@ def capabilities(request):
 
 @router.post("/register", response=TokenPairOut, throttle=[AnonRateThrottle("5/h")])
 def register(request, payload: RegisterIn):
-    # One transaction for the invite, the user and their settings. Previously
-    # UserSettings.objects.create() ran outside any transaction, so a failure
-    # there left a user with no settings row behind.
+    # One transaction for the invite, the user and their settings. The settings
+    # row is created by the post_save receiver in signals.py, which fires from
+    # create_user() below — inside this block, so a later failure rolls it back
+    # with the user rather than leaving a settings row behind.
     try:
         with transaction.atomic():
             invite = invites.redeem(payload.invite_code, payload.email)
             passwords.validate_or_422(payload.password, user=User(email=payload.email))
             user = User.objects.create_user(email=payload.email, password=payload.password)
-            UserSettings.objects.create(user=user)
             invite.used_by = user
             invite.save(update_fields=["used_by"])
     except IntegrityError:
