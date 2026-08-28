@@ -34,6 +34,16 @@ logger = logging.getLogger(__name__)
 
 TAG_PREFIX = "romgi-task-"
 
+# How long apply_selective_priority waits for a magnet's metadata before
+# giving up: 40 attempts at 15s, so 10 minutes. A ROM set never waits at all
+# (its .torrent carries the file list, so priorities go on immediately), but
+# a magnet's list has to come from the swarm — and a trackerless MiNERVA
+# link has to bootstrap DHT and find peers first. The old budget was 20
+# attempts at 2s: 40 seconds, which a healthy swarm beats and a thin or
+# slow-starting one does not.
+METADATA_MAX_RETRIES = 40
+METADATA_RETRY_DELAY = 15
+
 
 def _tag_for(task_id: int) -> str:
     return f"{TAG_PREFIX}{task_id}"
@@ -104,7 +114,20 @@ def add_torrent(task_id: int) -> None:
         handle = client.info(infohash) if infohash else None
         if handle is None:
             try:
-                client.add(magnet=task.link_torrent_magnet, tag=tag, save_path=_remote_dir(task.id))
+                # Added paused, and resumed by apply_selective_priority once
+                # the file list has been narrowed down. A magnet carries no
+                # file list, so a torrent added running selects everything
+                # the moment metadata arrives — for the MiNERVA bundle that
+                # is 3,847 files and 6.6TB, against the one game the user
+                # asked for. Confirmed live: when metadata outlasted the
+                # priority pass's retry budget, the whole bundle was left
+                # selected and downloading.
+                client.add(
+                    magnet=task.link_torrent_magnet,
+                    tag=tag,
+                    save_path=_remote_dir(task.id),
+                    is_paused=True,
+                )
             except qbittorrentapi.Conflict409Error:
                 pass  # lost the race to another task adding the same infohash — adopt it below
 
@@ -135,7 +158,7 @@ def add_torrent(task_id: int) -> None:
     apply_selective_priority.delay(task.id)
 
 
-@shared_task(bind=True, max_retries=20, default_retry_delay=2)
+@shared_task(bind=True, max_retries=METADATA_MAX_RETRIES, default_retry_delay=METADATA_RETRY_DELAY)
 def apply_selective_priority(self, task_id: int) -> None:
     """File priorities can't be set until qBittorrent has the torrent's
     metadata (file list) — retries until torrents_files() returns rows,
@@ -152,10 +175,29 @@ def apply_selective_priority(self, task_id: int) -> None:
 
     files = client.files(task.torrent_hash)
     if not files:
-        raise self.retry()
+        try:
+            raise self.retry()
+        except self.MaxRetriesExceededError:
+            # Running out of retries is not a benign timeout to swallow.
+            # add_torrent left the torrent paused so it couldn't transfer
+            # before this ran, so giving up quietly strands the task at
+            # "downloading" forever — no progress, no error, and not even
+            # retryable (the retry endpoint only accepts status="failed").
+            # Failing releases the torrent too, which matters because
+            # nothing else would ever clean it up.
+            logger.warning("No torrent metadata for task %s after %s attempts", task_id, METADATA_MAX_RETRIES)
+            _fail_torrent(task, "Timed out waiting for torrent metadata — no peers found for this magnet")
+            return
 
     for file_id, priority in desired_priorities(task.torrent_hash, files).items():
         client.set_file_priority(task.torrent_hash, file_id, priority)
+
+    # Only now is it safe to transfer. Unconditional rather than "only if we
+    # were the one who paused it": reaching here means this task is an
+    # active owner wanting bytes, and a torrent shared with another owner is
+    # only ever stopped once nothing wants it (downloads.api.pause_download).
+    # Resuming one already running is a no-op.
+    client.resume(task.torrent_hash)
 
 
 @shared_task

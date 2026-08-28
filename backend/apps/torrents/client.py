@@ -69,12 +69,20 @@ class TorrentClient:
             password=settings.QBITTORRENT_PASSWORD,
         )
 
-    def add(self, *, magnet: str, tag: str, save_path: str) -> None:
+    def add(self, *, magnet: str, tag: str, save_path: str, is_paused: bool = False) -> None:
+        """Add a torrent from a magnet.
+
+        `is_paused` matters more here than it looks: a magnet has no file
+        list until the swarm supplies it, so a torrent added running starts
+        transferring every file it eventually learns about. For a MiNERVA
+        bundle that is thousands of games — see apps.torrents.tasks, which
+        adds paused and resumes only once priorities are in.
+        """
         self._client.torrents_add(
             urls=magnet,
             save_path=save_path,
             tags=tag,
-            is_paused=False,
+            is_paused=is_paused,
             # Belt-and-braces alongside the explicit stop() in
             # finalize_completed_torrent — never seed after completion.
             ratio_limit=0,
