@@ -454,7 +454,14 @@ def _should_extract(archive_path: str, task: DownloadTask) -> bool:
     if not archive_path.lower().endswith(ARCHIVE_EXTENSIONS):
         return False
     settings_obj = UserSettings.objects.filter(user_id=task.user_id).first()
-    if settings_obj is None or settings_obj.auto_extract_disabled:
+    # A missing row means the user has never expressed a preference, so fall
+    # back to the model default (auto_extract_disabled=False) and extract. This
+    # used to return False, which silently skipped extraction for anyone whose
+    # row hadn't been created yet — then flipped the moment they opened the
+    # settings page.
+    if settings_obj is None:
+        return True
+    if settings_obj.auto_extract_disabled:
         return False
     return not settings_obj.extract_disabled_platforms.filter(id=task.platform_id).exists()
 

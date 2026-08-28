@@ -351,6 +351,20 @@ def test_createsuperuser_refuses_a_non_staff_superuser():
         User.objects.create_superuser("root@example.com", PASSWORD, is_staff=False)
 
 
+def test_users_created_outside_register_still_get_settings():
+    """
+    createsuperuser and the admin's add form don't go through /auth/register,
+    which used to be the only place a UserSettings row was created. Without a
+    row, _should_extract and the metadata endpoint fell back to "off" — the
+    opposite of the model's defaults — until the user opened the settings page.
+    """
+    user = User.objects.create_superuser("root@example.com", PASSWORD)
+
+    assert user.settings.metadata_enabled is True
+    assert user.settings.auto_extract_disabled is False
+    assert user.settings.max_concurrent_downloads == 3
+
+
 def test_invite_signup_url_points_at_the_frontend(settings):
     invite = Invite.objects.create()
     assert invite.signup_url == f"{settings.FRONTEND_BASE_URL}/signup?invite={invite.code}"

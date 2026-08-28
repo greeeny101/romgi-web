@@ -48,7 +48,10 @@ MEDIA_CHUNK = 64 * 1024
 @router.get("/entries/{slug}", response={200: GameMetadataOut, 204: None})
 def get_entry_metadata(request, slug: str):
     settings_obj = UserSettings.objects.filter(user=request.user).first()
-    if settings_obj is None or not settings_obj.metadata_enabled:
+    # A missing row falls back to the model default (metadata_enabled=True).
+    # This used to return 204 instead, so a user whose row hadn't been created
+    # yet saw no metadata at all until they opened the settings page.
+    if settings_obj is not None and not settings_obj.metadata_enabled:
         return 204, None
 
     build = CatalogBuild.objects.filter(status="active").order_by("-started_at").first()
