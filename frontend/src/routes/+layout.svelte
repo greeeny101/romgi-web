@@ -37,6 +37,7 @@
 		{ href: '/', label: 'Browse' },
 		{ href: '/downloads', label: 'Downloads' },
 		{ href: '/sets', label: 'ROM Sets' },
+		{ href: '/bios', label: 'BIOS' },
 		{ href: '/library', label: 'Library' },
 		{ href: '/sources', label: 'Sources' },
 		{ href: '/settings', label: 'Settings' }

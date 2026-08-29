@@ -6,4 +6,5 @@ websocket_urlpatterns = [
     re_path(r"^ws/downloads/$", consumers.DownloadProgressConsumer.as_asgi()),
     re_path(r"^ws/ingestion/$", consumers.IngestionProgressConsumer.as_asgi()),
     re_path(r"^ws/romsets/$", consumers.RomSetProgressConsumer.as_asgi()),
+    re_path(r"^ws/bios/$", consumers.BiosProgressConsumer.as_asgi()),
 ]

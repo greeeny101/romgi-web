@@ -13,15 +13,16 @@ backend/apps/
   downloads/    HTTP download pipeline, adapters, debrid resolution
   torrents/     qBittorrent integration + cross-app torrent ownership guard
   romsets/      whole-archive.org-item downloads into a server-side library
+  bios/         per-file BIOS downloads out of archive.org items, over HTTP
   credentials/  encrypted-at-rest vault (IA session, debrid/metadata keys)
   metadata/     ScreenScraper/SteamGridDB enrichment + cache
   realtime/     Channels WebSocket consumer (download progress)
-  common/       shared fields/models/management commands
+  common/       shared fields/models/management commands, archive.org client
 
 frontend/src/
-  routes/       pages (browse, entry detail, downloads, sets, library, settings, sources)
+  routes/       pages (browse, entry detail, downloads, sets, bios, library, settings, sources)
   lib/api/      typed fetch wrappers per backend router
-  lib/stores/   Svelte stores (auth, session, downloads, romsets, favorites, theme)
+  lib/stores/   Svelte stores (auth, session, downloads, romsets, bios, favorites, theme)
   lib/components/
 ```
 
@@ -137,24 +138,46 @@ services and override the two URLs to the host-mapped ports, as above.
 | Config | What it runs |
 |---|---|
 | **Django: Daphne (ASGI + WebSocket)** | The API + WS server on :8001 |
-| **Celery: Worker (debug, solo pool)** | A worker consuming every queue, `--pool=solo` so breakpoints actually stop execution (prefork's default forking pool can't be attached to the same way) |
+| **Celery: Worker — app (debug, solo pool)** | Everything except torrents (`celery,downloads,romsets,credentials,metadata,ingestion`). `--pool=solo` so breakpoints actually stop execution — prefork's default forking pool can't be attached to the same way. This is the one you debug in |
+| **Celery: Worker — torrents (debug, solo pool)** | Just the `torrents` queue. Start it and forget it; it logs at `warning` and has `justMyCode` on, because the poll beats fire every 3-5s forever |
 | **Celery: Beat** | The periodic-task scheduler |
 | **Django: Migrate** / **Shell** / **Setup Periodic Tasks** / **Ingest Catalog (MarioCube)** | One-shot `manage.py` commands, runnable under the debugger |
 | **SvelteKit: Dev Server** | `npm run dev` |
 | **Chrome: Debug Frontend** | Launches Chrome at http://localhost:5173 with source maps wired up |
 
-Two **compounds** start several of these together with one click:
-`Full Stack (Daphne + Celery + Frontend)` and
+### Why two workers rather than one
+
+`--pool=solo` is what makes breakpoints work, and it also means **one task at
+a time**. A single solo worker across every queue therefore turns any pause
+into a full stop for the whole app — and the torrent queue makes that bite
+immediately, because beat puts a poll on it every 3s and another every 5s. A
+worker parked on a breakpoint in unrelated code stops answering them and
+hundreds pile up; anything you queue afterwards waits behind that backlog and
+looks like a hung feature. (This is not hypothetical: it presented as a BIOS
+download stuck in `pending` with a perfectly healthy row behind it.)
+
+Splitting torrents onto its own worker keeps the poll beats flowing while
+you're stopped on a breakpoint in the other one. Both use
+`--prefetch-multiplier=1` so a paused worker doesn't hoard messages it isn't
+running — if it's then killed rather than resumed, anything it had reserved
+is stranded unacked in Redis.
+
+The same split is what docker-compose does with its `celery-worker*`
+services; these two configs are the host-side equivalent.
+
+Three **compounds** start several of these together with one click:
+`Full Stack (Daphne + Celery + Frontend)`, `Celery: Both Workers` (when
+Daphne and the frontend are already up), and
 `Frontend: Dev Server + Chrome Debugger`.
 
-**Stop the debug worker when you're done** — and stop the Compose workers
-before you start it (see the warning under *Manual / local development*
-above). It consumes the same Redis queues
-as the Compose `celery-worker*` services, so leaving it running means the two
-compete for every task — and because it runs whatever code was on disk when
-it started, it will fail tasks it doesn't recognise (`Received unregistered
-task of type ...`) while the Docker workers sit idle. A debug worker left
-running overnight looks exactly like a broken feature.
+**Stop the debug workers when you're done** — and stop the Compose workers
+before you start them (see the warning under *Manual / local development*
+above). They consume the same Redis queues
+as the Compose `celery-worker*` services, so leaving them running means the two
+sets compete for every task — and because they run whatever code was on disk
+when they started, they will fail tasks they don't recognise (`Received
+unregistered task of type ...`) while the Docker workers sit idle. A debug
+worker left running overnight looks exactly like a broken feature.
 
 Torrent work needs qBittorrent too, which none of these start by default
 (most day-to-day work doesn't need it) — `docker compose up -d qbittorrent`.

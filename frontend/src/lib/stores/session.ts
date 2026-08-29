@@ -2,6 +2,7 @@ import { writable } from 'svelte/store';
 import { authApi, type Me, type TokenPair } from '$lib/api/auth';
 import { settingsApi } from '$lib/api/settings';
 import { auth } from './auth';
+import { bios } from './bios';
 import { downloads } from './downloads';
 import { favorites } from './favorites';
 import { romsets } from './romsets';
@@ -15,6 +16,7 @@ async function afterAuth() {
 	await favorites.load();
 	downloads.start();
 	romsets.start();
+	bios.start();
 	settingsApi
 		.get()
 		.then((s) => theme.set(s.theme))
@@ -57,6 +59,7 @@ export const session = {
 		currentUser.set(null);
 		downloads.stop();
 		romsets.stop();
+		bios.stop();
 		favorites.clear();
 		theme.set('system');
 	}

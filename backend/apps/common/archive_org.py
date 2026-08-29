@@ -1,6 +1,14 @@
 """
-Read-only archive.org client for the ROM-set browser: item search, item
-metadata, and the raw bytes of an item's `_archive.torrent`.
+Read-only archive.org client: item search, item metadata, the raw bytes of
+an item's `_archive.torrent`, and a streaming fetch of one file out of an
+item.
+
+Shared by the two browsers built on archive.org items — the ROM-set browser
+(apps.romsets), which takes an item as a torrent, and the BIOS browser
+(apps.bios), which takes individual files out of one over HTTP. It lives in
+apps.common rather than either of them because the search/metadata half is
+identical for both and duplicating it would mean duplicating the credential
+and caching behaviour with it.
 
 Distinct from the ingestion pipeline's IA scraper
 (apps/ingestion/pipeline/sources/internet_archive), which regex-scrapes the
@@ -16,8 +24,12 @@ request-path caching.
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import os
+import re
 from dataclasses import dataclass
+from urllib.parse import quote
 
 import requests
 from django.core.cache import cache
@@ -26,15 +38,18 @@ logger = logging.getLogger(__name__)
 
 SEARCH_URL = "https://archive.org/advancedsearch.php"
 METADATA_URL = "https://archive.org/metadata/{identifier}"
+DOWNLOAD_URL = "https://archive.org/download/{identifier}/{name}"
 TORRENT_URL = "https://archive.org/download/{identifier}/{identifier}_archive.torrent"
 
 # The honest UA, matching credentials.services.internet_archive's requests
 # path — these are documented public JSON APIs, not a bot-detection layer we
 # have any reason to dress up for.
-USER_AGENT = "romgi/1.0 (ROM set browser; contact via project repo)"
+USER_AGENT = "romgi/1.0 (archive.org item browser; contact via project repo)"
 
 REQUEST_TIMEOUT = 30
 TORRENT_TIMEOUT = 60
+DOWNLOAD_TIMEOUT = 60
+DOWNLOAD_CHUNK_BYTES = 64 * 1024
 
 # advancedsearch.php is the endpoint that 503s under load; item metadata and
 # the torrent are cheap and effectively immutable, so they're held far longer.
@@ -93,7 +108,7 @@ def is_restricted(payload: dict) -> bool:
     return restricted or "loggedin" in _as_list(metadata.get("collection"))
 
 
-def _authenticated_get(url: str, user, timeout: int):
+def _authenticated_get(url: str, user, timeout: int, *, stream: bool = False, extra_headers: dict | None = None):
     """GET a `/download/` URL with the user's Internet Archive credentials.
 
     Two things have to be right and both are easy to get wrong:
@@ -105,6 +120,10 @@ def _authenticated_get(url: str, user, timeout: int):
       it. apps.common.http_session exists for this.
     * Both credential kinds are sent, because they expire independently —
       see internet_archive.apply_headers.
+
+    With `stream=True` the caller owns the response and must close it; 416
+    is handed back unraised, because a Range request that starts at EOF is
+    the normal outcome of resuming a file that already finished.
     """
     from apps.common.http_session import session_for
     from apps.credentials.models import EncryptedCredential
@@ -122,8 +141,11 @@ def _authenticated_get(url: str, user, timeout: int):
         ia.apply_headers(credential, headers)
 
     session = session_for(url, headers)
-    response = session.get(url, headers=headers, timeout=timeout, allow_redirects=True)
+    if extra_headers:
+        headers.update(extra_headers)
+    response = session.get(url, headers=headers, timeout=timeout, stream=stream, allow_redirects=True)
     if response.status_code in (401, 403):
+        response.close()
         if credential is not None and ia.is_logged_in(credential):
             ia.record_auth_failure(credential)
             raise ArchiveOrgAuthRequired(
@@ -131,9 +153,11 @@ def _authenticated_get(url: str, user, timeout: int):
                 "Re-authenticate under Settings → Internet Archive."
             )
         raise ArchiveOrgAuthRequired(
-            "This set is restricted and needs an Internet Archive login. "
+            "This item is restricted and needs an Internet Archive login. "
             "Add one under Settings → Internet Archive, then try again."
         )
+    if stream and response.status_code == 416:
+        return response
     response.raise_for_status()
     return response
 
@@ -162,7 +186,7 @@ def search(query: str, *, page: int = 1, rows: int = 25) -> tuple[list[SearchRes
     """Item search. Returns `(results, total_found)`."""
     rows = max(1, min(rows, MAX_ROWS))
     page = max(1, page)
-    cache_key = f"romsets:search:{query}:{rows}:{page}:{DEFAULT_SORT}"
+    cache_key = f"ia:search:{query}:{rows}:{page}:{DEFAULT_SORT}"
 
     cached = cache.get(cache_key)
     if cached is None:
@@ -203,7 +227,7 @@ def search(query: str, *, page: int = 1, rows: int = 25) -> tuple[list[SearchRes
 
 def item(identifier: str) -> dict:
     """Raw `/metadata/<id>` payload. Empty `{}` means no such item."""
-    cache_key = f"romsets:item:{identifier}"
+    cache_key = f"ia:item:{identifier}"
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
@@ -270,7 +294,7 @@ def torrent_bytes(identifier: str, user=None) -> bytes:
     fetches them, and the cache is only ever populated by someone who was
     allowed to read them.
     """
-    cache_key = f"romsets:torrent:{identifier}"
+    cache_key = f"ia:torrent:{identifier}"
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
@@ -288,3 +312,120 @@ def torrent_bytes(identifier: str, user=None) -> bytes:
 
     cache.set(cache_key, data, TORRENT_CACHE_SECONDS)
     return data
+
+
+def _md5_of(path: str) -> str:
+    # md5 because that is what archive.org publishes; it's an integrity
+    # check against a truncated transfer, not a security boundary.
+    digest = hashlib.md5()
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def stream_file(
+    identifier: str,
+    name: str,
+    dest_path: str,
+    *,
+    user=None,
+    expected_size: int = 0,
+    md5: str | None = None,
+    on_progress=None,
+    should_abort=None,
+) -> tuple[int, bool]:
+    """Stream one file out of an item to `dest_path`.
+
+    Returns `(bytes_on_disk, completed)`. `completed` is False only when
+    `should_abort()` asked us to stop, in which case the partial file is
+    left in place — the next call resumes from it with a `Range` header.
+
+    `on_progress(received, total)` is called per chunk and is expected to do
+    its own throttling; `should_abort()` is polled on the same cadence.
+
+    `md5` is archive.org's published checksum for the file. Verifying it
+    matters more here than for a ROM: a corrupt BIOS doesn't fail loudly,
+    it makes an emulator boot to a black screen with nothing to point at.
+    """
+    url = DOWNLOAD_URL.format(identifier=identifier, name=quote(name))
+    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+
+    current = os.path.getsize(dest_path) if os.path.exists(dest_path) else 0
+    if expected_size and current == expected_size:
+        if md5 and _md5_of(dest_path) != md5.lower():
+            os.remove(dest_path)
+            current = 0
+        else:
+            if on_progress:
+                on_progress(current, current)
+            return current, True
+    # A file larger than archive.org says it is can only be junk left by a
+    # previous run against a different item revision — there is no rounding
+    # tolerance to allow here, unlike the catalog's link_size estimates.
+    if expected_size and current > expected_size:
+        os.remove(dest_path)
+        current = 0
+
+    extra = {"Range": f"bytes={current}-"} if current else None
+    try:
+        response = _authenticated_get(url, user, DOWNLOAD_TIMEOUT, stream=True, extra_headers=extra)
+    except ArchiveOrgError:
+        raise
+    except requests.RequestException as exc:
+        raise ArchiveOrgError(f"Could not fetch {name} from {identifier}: {exc}") from exc
+
+    aborted = False
+    with response:
+        if response.status_code == 416:
+            # The range starts at or past EOF, so what's on disk is whole —
+            # the normal outcome of resuming a file that already finished.
+            # 416 carries the real total in "Content-Range: bytes */<total>".
+            match = re.search(r"/(\d+)\s*$", response.headers.get("Content-Range", ""))
+            if match and current == int(match.group(1)):
+                if on_progress:
+                    on_progress(current, current)
+                return current, True
+            os.remove(dest_path)
+            raise ArchiveOrgError(f"archive.org rejected the resume of {name}; the partial file was discarded.")
+
+        range_honored = response.status_code == 206
+        mode = "ab" if (current and range_honored) else "wb"
+        received = current if range_honored else 0
+
+        # Content-Length counts the bytes on the wire, while iter_content
+        # yields decoded ones — so it's only a true size when the body isn't
+        # content-encoded.
+        length = response.headers.get("Content-Length")
+        encoding = (response.headers.get("Content-Encoding") or "identity").lower()
+        total = (int(length) + received) if (length and encoding == "identity") else expected_size
+
+        try:
+            with open(dest_path, mode) as fh:
+                for chunk in response.iter_content(chunk_size=DOWNLOAD_CHUNK_BYTES):
+                    if not chunk:
+                        continue
+                    fh.write(chunk)
+                    received += len(chunk)
+                    if on_progress:
+                        on_progress(received, total)
+                    if should_abort and should_abort():
+                        aborted = True
+                        break
+        except requests.RequestException as exc:
+            raise ArchiveOrgError(f"Transfer of {name} from {identifier} failed: {exc}") from exc
+
+    if aborted:
+        return received, False
+
+    if expected_size and received != expected_size:
+        raise ArchiveOrgError(f"{name} came back {received} bytes, but archive.org lists it as {expected_size}.")
+    if md5:
+        actual = _md5_of(dest_path)
+        if actual != md5.lower():
+            os.remove(dest_path)
+            raise ArchiveOrgError(
+                f"{name} failed its checksum (archive.org says {md5.lower()}, got {actual}). "
+                "The partial download was removed; try again."
+            )
+    return received, True

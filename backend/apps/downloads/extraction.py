@@ -33,10 +33,27 @@ def _safe_target(output_dir: str, member_name: str) -> str | None:
 
 
 def extract_archive(archive_path: str, output_dir: str, on_progress=None) -> str:
+    """Extract `archive_path` into `output_dir`.
+
+    Raises ExtractionError if the archive itself is the problem, and OSError
+    if the filesystem is. That split is the contract callers branch on, and
+    it has to hold for every failure the underlying libraries can produce —
+    not just the unsafe-path check below. `zipfile` raises BadZipFile,
+    `zlib` raises zlib.error and py7zr has its own hierarchy, none of which
+    derive from either. Left unmapped they escaped extract_archive_task's
+    handlers entirely and stranded the download at "extracting" forever with
+    no error: observed on two torrents that arrived the right size but with
+    damaged contents.
+    """
     os.makedirs(output_dir, exist_ok=True)
-    if archive_path.lower().endswith(".zip"):
-        return _extract_zip(archive_path, output_dir, on_progress)
-    return _extract_7z(archive_path, output_dir, on_progress)
+    try:
+        if archive_path.lower().endswith(".zip"):
+            return _extract_zip(archive_path, output_dir, on_progress)
+        return _extract_7z(archive_path, output_dir, on_progress)
+    except (ExtractionError, OSError):
+        raise
+    except Exception as exc:
+        raise ExtractionError(f"{type(exc).__name__}: {exc}") from exc
 
 
 def _extract_zip(archive_path: str, output_dir: str, on_progress) -> str:
@@ -83,9 +100,7 @@ def _extract_7z(archive_path: str, output_dir: str, on_progress) -> str:
         total_bytes = sum(f.uncompressed for f in files)
         archive.extractall(path=output_dir)
         extracted_files = [
-            path
-            for f in files
-            if (path := _safe_target(output_dir, f.filename)) and os.path.exists(path)
+            path for f in files if (path := _safe_target(output_dir, f.filename)) and os.path.exists(path)
         ]
 
     if on_progress:
@@ -116,6 +131,24 @@ DOCUMENTATION_EXTENSIONS = (
 )
 
 
+def is_filesystem_noise(name: str) -> bool:
+    """Sidecars the filesystem creates, which were never in the archive.
+
+    macOS writes an AppleDouble file (`._name`) beside every file it creates
+    on an SMB share, and Finder leaves `.DS_Store` in directories it visits.
+    Both appear in the extracted directory moments after extraction and are
+    indistinguishable from payload by extension.
+
+    This is not cosmetic. Counting them made every single-ROM archive look
+    like a multi-file set, so payload_files returned two entries, the caller
+    took the "only usable together" branch, threw the extracted ROM away and
+    served the .zip instead. Silently, correctly-looking, and only on a
+    share — which is where this project's library actually lives.
+    """
+    base = os.path.basename(name)
+    return base.startswith("._") or base == ".DS_Store"
+
+
 def payload_files(directory: str) -> list[str]:
     """The extracted files that are plausibly the game itself.
 
@@ -130,7 +163,7 @@ def payload_files(directory: str) -> list[str]:
     found: list[str] = []
     for root, _dirs, names in os.walk(directory):
         for name in names:
-            if name.lower().endswith(DOCUMENTATION_EXTENSIONS):
+            if name.lower().endswith(DOCUMENTATION_EXTENSIONS) or is_filesystem_noise(name):
                 continue
             found.append(os.path.join(root, name))
     return sorted(found)

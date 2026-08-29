@@ -9,6 +9,7 @@ from ninja import NinjaAPI
 
 from apps.accounts.api import router as accounts_router
 from apps.accounts.api import settings_router
+from apps.bios.api import router as bios_router
 from apps.catalog.api import router as catalog_router
 from apps.credentials.api import router as credentials_router
 from apps.downloads.api import router as downloads_router
@@ -28,3 +29,4 @@ api.add_router("/credentials", credentials_router)
 api.add_router("/metadata", metadata_router)
 api.add_router("/ingestion", ingestion_router)
 api.add_router("/romsets", romsets_router)
+api.add_router("/bios", bios_router)
