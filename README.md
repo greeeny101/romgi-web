@@ -37,6 +37,9 @@ optional game metadata enrichment (ScreenScraper/SteamGridDB).
   archive.org by emulator (FBNeo, MAME, …) and fetch one as a unit, instead of
   a file at a time. Per-file selection, so a 5GB file you don't want is never
   transferred.
+- **[BIOS files](docs/bios.md)** — the system files an emulator won't boot
+  without, from archive.org over plain HTTP into `bios/<platform>/`, with
+  archive.org's published md5 verified on every file.
 - **Metadata enrichment** from ScreenScraper/SteamGridDB, with box art and a
   local cache.
 - **Favorites and recently-viewed**, per user.
@@ -125,6 +128,7 @@ password — in [docs/installation.md](docs/installation.md).
 | [Installation](docs/installation.md) | Full configuration, using existing Postgres/Redis/qBittorrent servers, first account, loading a catalog |
 | [Development](docs/development.md) | Running backend/frontend on the host, VS Code debug configs, tests, code layout |
 | [ROM sets](docs/romsets.md) | How whole-romset downloads work, and the disk-space rules that govern them |
+| [BIOS files](docs/bios.md) | Where BIOS files come from, where they land, and why they don't use BitTorrent |
 | [Deployment](docs/deployment.md) | Production settings and the auth model |
 | [Known issues](KNOWN_ISSUES.md) | What's unverified, deliberately unimplemented, or worth a second look before relying on this in production |
 

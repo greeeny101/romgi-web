@@ -46,8 +46,19 @@
 				"TORRENT_WORKING_DIR": "/Volumes/Emulation/romgi/data/torrents"
 			},
 		},
+		// Two workers, not one, and the split is the same one docker-compose
+		// makes. `--pool=solo` is required for breakpoints to be hit at all
+		// (a prefork child isn't attached to the debugger), but solo means
+		// ONE task at a time — so a single worker across every queue turns
+		// any pause into a full stop for the whole app. The torrent queue is
+		// what makes that bite: beat puts a poll on it every 3s and another
+		// every 5s, so a worker parked on a breakpoint in, say, the BIOS code
+		// stops answering them, and hundreds pile up behind it.
+		//
+		// Run both together (the compound below does). Debug in "app"; leave
+		// "torrents" running and ignore it unless you're working on torrents.
 		{
-			"name": "Celery: Worker (debug, solo pool)",
+			"name": "Celery: Worker — app (debug, solo pool)",
 			"type": "debugpy",
 			"request": "launch",
 			"module": "celery",
@@ -55,11 +66,44 @@
 				"-A", "config", "worker",
 				"-l", "info",
 				"--pool=solo",
-				"-Q", "celery,downloads,torrents,romsets,credentials,metadata,ingestion"
+				// One reserved task at a time. The default (4) lets a worker
+				// sitting on a breakpoint hoard messages it isn't running,
+				// and if it's then killed rather than resumed they're stranded
+				// unacked in Redis — which is exactly how a BIOS download got
+				// stuck in "pending" with nothing left to start it.
+				"--prefetch-multiplier=1",
+				"-Q", "celery,downloads,romsets,credentials,metadata,ingestion"
 			],
 			"cwd": "${workspaceFolder}/backend",
 			"python": "${workspaceFolder}/backend/.venv/bin/python",
 			"justMyCode": false,
+			"envFile": "${workspaceFolder}/backend/.env",
+			"env": {
+				"DJANGO_SETTINGS_MODULE": "config.settings.development",
+				"QBITTORRENT_HOST": "http://localhost:8080",
+				"STAGED_FILES_DIR": "/Volumes/Emulation/romgi/data/staged",
+				"TORRENT_WORKING_DIR": "/Volumes/Emulation/romgi/data/torrents"
+			},
+		},
+		{
+			"name": "Celery: Worker — torrents (debug, solo pool)",
+			"type": "debugpy",
+			"request": "launch",
+			"module": "celery",
+			"args": [
+				"-A", "config", "worker",
+				"-l", "warning",
+				"--pool=solo",
+				"--prefetch-multiplier=1",
+				"-Q", "torrents"
+			],
+			"cwd": "${workspaceFolder}/backend",
+			"python": "${workspaceFolder}/backend/.venv/bin/python",
+			// The poll beats fire every 3-5s forever, so this one is noise:
+			// logged at warning rather than info, and stepped over rather
+			// than into. Flip justMyCode/loglevel if you're debugging
+			// apps.torrents or apps.romsets themselves.
+			"justMyCode": true,
 			"envFile": "${workspaceFolder}/backend/.env",
 			"env": {
 				"DJANGO_SETTINGS_MODULE": "config.settings.development",
@@ -174,8 +218,21 @@
 			"name": "Full Stack (Daphne + Celery + Frontend)",
 			"configurations": [
 				"Django: Daphne (ASGI + WebSocket)",
-				"Celery: Worker (debug, solo pool)",
+				"Celery: Worker — app (debug, solo pool)",
+				"Celery: Worker — torrents (debug, solo pool)",
 				"SvelteKit: Dev Server"
+			],
+			"stopAll": true
+		},
+		{
+			// Both workers without the web tier — for when Daphne and the
+			// frontend are already up and you only want to restart Celery
+			// (which you must do by hand: unlike runserver, a Celery worker
+			// has no autoreload, so it keeps running the code it booted with).
+			"name": "Celery: Both Workers",
+			"configurations": [
+				"Celery: Worker — app (debug, solo pool)",
+				"Celery: Worker — torrents (debug, solo pool)"
 			],
 			"stopAll": true
 		},

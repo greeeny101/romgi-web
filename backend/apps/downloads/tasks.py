@@ -49,8 +49,7 @@ from .progress import push_progress, push_status
 logger = logging.getLogger(__name__)
 
 USER_AGENT = (
-    "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/120.0.0.0 Mobile Safari/537.36"
+    "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
 )
 MAX_HTTP_RETRIES = 3
 RETRYABLE_SUBSTRINGS = (
@@ -83,6 +82,12 @@ SIZE_ESTIMATE_TOLERANCE = 1.15
 DB_WRITE_INTERVAL = 2.0
 PROGRESS_PUSH_INTERVAL = 1.0
 ARCHIVE_EXTENSIONS = (".zip", ".7z")
+
+# How long a row may sit in "extracting" without its heartbeat moving before
+# it is treated as abandoned. Generous against DB_WRITE_INTERVAL (2s): a
+# healthy extraction writes constantly, so this only ever catches one that
+# genuinely stopped, and never a merely large archive.
+ABANDONED_EXTRACTION_SECONDS = 600
 # A debrid-resolved CDN link failing with any of these is treated as "the
 # link expired," not a generic error — bounded relink-and-retry below,
 # ports download_service.dart's isDebridExpiry condition + _maxDebridRelinkAttempts.
@@ -126,6 +131,33 @@ def dispatch_pending_downloads() -> None:
     user_ids = DownloadTask.objects.filter(status="pending").values_list("user_id", flat=True).distinct()
     for user_id in user_ids:
         dispatch_next_for_user(user_id)
+    _fail_abandoned_extractions()
+
+
+def _fail_abandoned_extractions() -> None:
+    """Fail rows left in "extracting" by a worker that never came back.
+
+    The exception handlers in extract_archive_task cover extraction going
+    wrong; they cannot cover the worker disappearing mid-extraction, which
+    raises nothing anywhere. That left the row at "extracting" forever: no
+    error, no progress, and not even retryable, since the retry endpoint
+    only accepts status="failed".
+
+    Safe to judge by `updated_at` only because on_progress now writes a
+    heartbeat — a healthy extraction touches the row every couple of
+    seconds, so a stale one really has stopped. Failing rather than
+    re-dispatching is deliberate: two extractions racing into the same
+    output directory is worse than asking the user to press retry.
+    """
+    cutoff = timezone.now() - timezone.timedelta(seconds=ABANDONED_EXTRACTION_SECONDS)
+    stale = DownloadTask.objects.filter(status="extracting", updated_at__lt=cutoff)
+    for task in stale:
+        logger.warning("Task %s abandoned in extraction since %s", task.id, task.updated_at)
+        task.status = "failed"
+        task.error = "Extraction stopped unexpectedly — the worker restarted or the storage went away. Retry it."
+        task.save(update_fields=["status", "error", "updated_at"])
+        push_status(task)
+        dispatch_next_for_user(task.user_id)
 
 
 def _should_abort(task_id: int) -> bool:
@@ -174,9 +206,7 @@ def _find_failover_link(task: DownloadTask):
     # rejected with "Internet Archive login required" anyway).
     credential = EncryptedCredential.objects.filter(user_id=task.user_id, provider="internet_archive").first()
     ia_logged_in = credential is not None and ia.is_logged_in(credential)
-    ranked = rank_links(
-        entry.links.select_related("source", "torrent"), settings_obj, ia_logged_in=ia_logged_in
-    )
+    ranked = rank_links(entry.links.select_related("source", "torrent"), settings_obj, ia_logged_in=ia_logged_in)
     tried = set(task.failed_urls) | {task.link_url}
     for candidate in ranked:
         if candidate.score > AUTH_GATED_SCORE and candidate.link.url not in tried:
@@ -234,13 +264,28 @@ def _handle_debrid_expiry(task: DownloadTask) -> None:
     dispatch_next_for_user(task.user_id)
 
 
+def live_task(task_id: int) -> DownloadTask | None:
+    """The task row, or None if it has been deleted.
+
+    Every task that takes a task_id already returns early when the status
+    isn't the one it expects; a row that is gone is that same judgement
+    taken to its limit, so it returns quietly too rather than raising.
+
+    Not a theoretical case. Cancelling a download deletes the row
+    (api._discard_task) while work naming it is still queued behind it:
+    apply_selective_priority can be up to two minutes into its metadata
+    retries, poll_active_torrents may already have dispatched finalize, and
+    a beat poll enqueued seconds earlier is still in the queue. Every one of
+    those ended in DownloadTask.DoesNotExist — a traceback in the log for a
+    row the user deliberately removed.
+    """
+    return DownloadTask.objects.filter(id=task_id).first()
+
+
 @shared_task(bind=True)
 def start_download(self, task_id: int) -> None:
-    try:
-        task = DownloadTask.objects.get(id=task_id)
-    except DownloadTask.DoesNotExist:
-        return
-    if task.status != "pending":
+    task = live_task(task_id)
+    if task is None or task.status != "pending":
         return
 
     adapter = registry.adapter_for(task)
@@ -276,8 +321,8 @@ def start_download(self, task_id: int) -> None:
 
 @shared_task
 def http_download(task_id: int) -> None:
-    task = DownloadTask.objects.get(id=task_id)
-    if task.status != "downloading":
+    task = live_task(task_id)
+    if task is None or task.status != "downloading":
         return
 
     directory = task_dir(task.id)
@@ -485,17 +530,28 @@ def _finish_download(task: DownloadTask, archive_path: str) -> None:
 
 @shared_task
 def extract_archive_task(task_id: int, archive_path: str) -> None:
-    task = DownloadTask.objects.get(id=task_id)
+    task = live_task(task_id)
+    if task is None:
+        return
     out_dir = os.path.join(task_dir(task.id), "extracted")
     last_push = 0.0
+    last_write = 0.0
 
     def on_progress(extracted: int, total: int) -> None:
-        nonlocal last_push
+        nonlocal last_push, last_write
         now = time.monotonic()
         task.progress = extracted / total if total else 1.0
         if now - last_push >= 0.2:
             push_progress(task)
             last_push = now
+        if now - last_write >= DB_WRITE_INTERVAL:
+            # Also a heartbeat. Without a write here `updated_at` never moves
+            # between "extracting" being set and extraction finishing, so a
+            # row abandoned mid-extraction (a worker restart, a dropped SMB
+            # share) is indistinguishable from one that is simply slow —
+            # which is what dispatch_pending_downloads has to tell apart.
+            task.save(update_fields=["progress", "updated_at"])
+            last_write = now
 
     try:
         # The returned pick isn't used: it's the largest extracted file, which
@@ -506,6 +562,21 @@ def extract_archive_task(task_id: int, archive_path: str) -> None:
     except ExtractionError:
         task.status = "failed"
         task.error = "Extraction failed — the archive may be corrupt"
+        task.save(update_fields=["status", "error", "updated_at"])
+        push_status(task)
+        dispatch_next_for_user(task.user_id)
+        return
+    except OSError as exc:
+        # Anything that isn't the archive's fault: the staging share dropping
+        # mid-extraction, a full disk, a permission change. Previously only
+        # ExtractionError was caught, so these escaped, killed the task, and
+        # left the row at "extracting" forever with no error and nothing to
+        # retry — the user's view was a download stuck at 100% doing nothing.
+        # Confirmed live: a worker hit PermissionError on /Volumes/Emulation
+        # while the SMB share was unmounted.
+        logger.warning("Extraction of task %s failed on the filesystem", task_id, exc_info=True)
+        task.status = "failed"
+        task.error = f"Could not extract this download: {exc}"
         task.save(update_fields=["status", "error", "updated_at"])
         push_status(task)
         dispatch_next_for_user(task.user_id)
@@ -606,13 +677,11 @@ def write_playlist(task_id: int) -> None:
     those instead — still a playable M3U for a client fetching relative to
     the API origin.
     """
-    task = DownloadTask.objects.get(id=task_id)
-    if not task.group_key:
+    task = live_task(task_id)
+    if task is None or not task.group_key:
         return
 
-    members = list(
-        DownloadTask.objects.filter(user=task.user, group_key=task.group_key).order_by("group_index")
-    )
+    members = list(DownloadTask.objects.filter(user=task.user, group_key=task.group_key).order_by("group_index"))
     if len(members) < 2 or any(m.status != "completed" for m in members):
         return
 

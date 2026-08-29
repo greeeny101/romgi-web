@@ -1,0 +1,90 @@
+# Curated system → archive.org query map for the BIOS browser.
+#
+# Same shape and the same reason as romsets/emulators.yml: free-text search
+# against archive.org is too noisy to hand to a user. A bare `bios AND
+# (playstation OR psx OR ps1)` returns 530 items whose top five include two
+# Redump romsets, "Retro Roms Best Set" and a MAME reference set — none of
+# which are BIOS. Scoping the term to the *title* (`title:(bios)`) cuts that
+# to 120 items of which every one on the first page is a genuine BIOS item.
+# That is the whole trick, and it is why every query here uses title:().
+#
+# `platform_id` MUST be a real apps.catalog.Platform primary key (they're
+# short string PKs — 'ps1', 'sat', 'dc', …). A typo here is caught by the
+# system check in checks.py, not at FK-insert time halfway through a
+# download.
+#
+# `query` is passed to advancedsearch.php as-is. A user's own search text is
+# ANDed onto it rather than replacing it, so the curation always holds.
+#
+# Note that the big multi-system packs (OpenEmuBIOSPack, retroarch_bios_pack,
+# verifiedbiosfiles, …) legitimately rank high on the narrower systems too —
+# they really do contain those BIOS files. That's fine and useful: the file
+# picker means taking one file out of a 400MB pack costs 400KB.
+
+- id: ps1
+  name: PlayStation
+  platform_id: ps1
+  query: 'title:(bios) AND (playstation OR psx OR ps1 OR scph) AND mediatype:(software)'
+
+- id: ps2
+  name: PlayStation 2
+  platform_id: ps2
+  query: 'title:(bios) AND (ps2 OR "playstation 2") AND mediatype:(software)'
+
+- id: psp
+  name: PlayStation Portable
+  platform_id: psp
+  query: 'title:(bios) AND (psp OR "playstation portable") AND mediatype:(software)'
+
+- id: sat
+  name: Sega Saturn
+  platform_id: sat
+  query: 'title:(bios) AND (saturn) AND mediatype:(software)'
+
+- id: scd
+  name: Sega CD / Mega CD
+  platform_id: scd
+  query: 'title:(bios) AND ("sega cd" OR segacd OR "mega cd" OR megacd) AND mediatype:(software)'
+
+- id: dc
+  name: Dreamcast
+  platform_id: dc
+  query: 'title:(bios) AND (dreamcast OR dc) AND mediatype:(software)'
+
+- id: 3do
+  name: 3DO
+  platform_id: 3do
+  query: 'title:(bios) AND (3do) AND mediatype:(software)'
+
+- id: cdi
+  name: Philips CD-i
+  platform_id: cdi
+  query: 'title:(bios) AND ("cd-i" OR cdi OR philips) AND mediatype:(software)'
+
+- id: tgcd
+  name: TurboGrafx-CD / PC Engine CD
+  platform_id: tgcd
+  query: 'title:(bios) AND ("pc engine" OR pcengine OR turbografx OR "turbo grafx") AND mediatype:(software)'
+
+- id: ngcd
+  name: Neo Geo CD
+  platform_id: ngcd
+  query: 'title:(bios) AND ("neo geo" OR neogeo) AND mediatype:(software)'
+
+- id: gba
+  name: Game Boy Advance
+  platform_id: gba
+  query: 'title:(bios OR boot) AND ("game boy" OR gameboy OR gba OR "game boy advance") AND mediatype:(software)'
+
+- id: nds
+  name: Nintendo DS
+  platform_id: nds
+  query: 'title:(bios) AND (nintendo OR nds OR "nintendo ds" OR "famicom disk") AND mediatype:(software)'
+
+# The catch-all, deliberately last and deliberately unplatformed: the packs
+# that span every system at once. Files from these land in bios/_unsorted/
+# because there is no one platform they belong to.
+- id: multi
+  name: Multi-system packs
+  platform_id: null
+  query: 'title:(bios OR "bios pack") AND (emulator OR emulators OR retroarch OR batocera OR retropie OR recalbox OR emuelec) AND mediatype:(software)'

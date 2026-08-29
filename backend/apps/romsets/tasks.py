@@ -29,11 +29,11 @@ from celery import shared_task
 from django.conf import settings as django_settings
 from django.utils import timezone
 
+from apps.common import archive_org
 from apps.downloads.extraction import extract_archive
 from apps.torrents.client import ERROR_STATES, client
 from apps.torrents.ownership import desired_priorities, torrent_in_use
 
-from . import archive_org
 from .bencode import infohash_from_torrent
 from .models import RomSetDownload, RomSetFile
 from .progress import push_progress, push_status

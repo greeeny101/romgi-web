@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     "apps.downloads",
     "apps.torrents",
     "apps.romsets",
+    "apps.bios",
     "apps.credentials",
     "apps.metadata",
     "apps.realtime",
@@ -163,6 +164,10 @@ CELERY_TASK_ROUTES = {
     # that share it. Celery matches literal route keys before glob patterns,
     # so this wins over the line above regardless of ordering.
     "apps.romsets.tasks.extract_romset": {"queue": "romsets"},
+    # BIOS downloads are plain HTTP GETs the worker performs itself — no
+    # qBittorrent, and megabytes rather than tens of gigabytes — so they ride
+    # the existing downloads queue and need no worker of their own.
+    "apps.bios.tasks.*": {"queue": "downloads"},
     "apps.credentials.tasks.*": {"queue": "credentials"},
     "apps.metadata.tasks.*": {"queue": "metadata"},
     # Deliberately the default "celery" queue rather than one of its own:

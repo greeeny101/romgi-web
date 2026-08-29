@@ -17,8 +17,8 @@ from ninja.errors import HttpError
 from ninja_jwt.authentication import JWTAuth
 
 from apps.catalog.models import Platform
+from apps.common import archive_org
 
-from . import archive_org
 from .bencode import BencodeError, torrent_files
 from .emulators import build_query, get_emulator, load_emulators
 from .models import RomSetDownload, RomSetFile

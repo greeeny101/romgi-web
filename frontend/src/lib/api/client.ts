@@ -38,7 +38,15 @@ async function doRefresh(): Promise<string | null> {
 	return body.access;
 }
 
-function refreshAccessToken(): Promise<string | null> {
+/**
+ * Exported for the WebSocket layer (stores/ws.ts), which authenticates with
+ * the access token in a query param and so has no 401 to react to — it has to
+ * ask for a fresh token *before* it dials. It must share this single-flight
+ * promise rather than refresh on its own: the refresh token rotates, so two
+ * independent redemptions of the same one would blacklist it and sign the
+ * user out.
+ */
+export function refreshAccessToken(): Promise<string | null> {
 	if (!inFlightRefresh) {
 		const pending = doRefresh().finally(() => {
 			if (inFlightRefresh === pending) inFlightRefresh = null;

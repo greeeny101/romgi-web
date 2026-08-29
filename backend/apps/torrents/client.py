@@ -60,6 +60,12 @@ PRIORITY_DOWNLOAD = 1
 # sitting idle or (if something raced our stop() call) actively seeding.
 FINISHED_STATES = {"stalledUP", "uploading", "queuedUP", "forcedUP", "pausedUP", "stoppedUP"}
 
+# States meaning the daemon has actually stopped the torrent, so libtorrent
+# has flushed its pending writes and let go of the files. qBittorrent 5.x
+# renamed "paused*" to "stopped*"; both spellings are accepted so this keeps
+# working either side of that change.
+STOPPED_STATES = {"stoppedUP", "stoppedDL", "pausedUP", "pausedDL"}
+
 
 class TorrentClient:
     def __init__(self):
@@ -69,20 +75,33 @@ class TorrentClient:
             password=settings.QBITTORRENT_PASSWORD,
         )
 
-    def add(self, *, magnet: str, tag: str, save_path: str, is_paused: bool = False) -> None:
+    def add(self, *, magnet: str, tag: str, save_path: str, stop_at_metadata: bool = False) -> None:
         """Add a torrent from a magnet.
 
-        `is_paused` matters more here than it looks: a magnet has no file
-        list until the swarm supplies it, so a torrent added running starts
-        transferring every file it eventually learns about. For a MiNERVA
-        bundle that is thousands of games — see apps.torrents.tasks, which
-        adds paused and resumes only once priorities are in.
+        `stop_at_metadata` is how a magnet gets its file list without
+        transferring any of it. A magnet carries no file list until the
+        swarm supplies it, so a torrent added running starts fetching
+        everything it eventually learns about — for a MiNERVA bundle that is
+        thousands of games and terabytes, against the one the user asked for.
+
+        The obvious guard — adding it paused — does NOT work, and failed in a
+        way that looks like a network problem. On qBittorrent 5.x a stopped
+        torrent joins no swarm at all, so the metadata that priorities depend
+        on can never arrive: the torrent sits at `stoppedDL`, size 0, "0
+        seeds / 0 peers", until the priority pass exhausts its retries and
+        blames a dead swarm. DHT was healthy the whole time; the torrent
+        simply was not in it.
+
+        `stopCondition=MetadataReceived` is the daemon's own answer: it runs
+        just long enough to fetch the file list, then stops itself before any
+        piece is downloaded. apps.torrents.tasks then applies priorities and
+        resumes.
         """
         self._client.torrents_add(
             urls=magnet,
             save_path=save_path,
             tags=tag,
-            is_paused=is_paused,
+            stop_condition="MetadataReceived" if stop_at_metadata else None,
             # Belt-and-braces alongside the explicit stop() in
             # finalize_completed_torrent — never seed after completion.
             ratio_limit=0,

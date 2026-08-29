@@ -24,22 +24,45 @@ class Command(BaseCommand):
             period=IntervalSchedule.MINUTES,
         )
         self._interval(
+            name="Dispatch pending BIOS downloads",
+            task="apps.bios.tasks.dispatch_pending_bios",
+            every=5,
+            period=IntervalSchedule.MINUTES,
+        )
+        self._interval(
             name="Clean up expired staged files",
             task="apps.downloads.tasks.cleanup_expired_staged_files",
             every=1,
             period=IntervalSchedule.HOURS,
         )
+        # The two polls carry an expiry, unlike everything else here. A poll
+        # is only worth anything at the moment it fires: it reads live state
+        # out of qBittorrent, so one that has been queued for four minutes
+        # tells nobody anything a fresher one won't. Beat keeps producing them
+        # whether or not a worker is consuming, so any worker downtime — a
+        # restart, a breakpoint — leaves a backlog of roughly 20 messages a
+        # minute that the worker then grinds through before it reaches
+        # anything useful. Measured: a 131-deep backlog took ~70 seconds to
+        # clear, and apply_selective_priority (the task that actually starts
+        # a torrent transferring) sat behind all of it, so the download stayed
+        # stopped at 0 bytes with nothing updating.
+        #
+        # Expiring them makes the backlog evaporate instead: Celery discards a
+        # message past its expiry without running it, so the worker reaches
+        # real work immediately and progress resumes updating on schedule.
         self._interval(
             name="Poll active torrents",
             task="apps.torrents.tasks.poll_active_torrents",
             every=3,
             period=IntervalSchedule.SECONDS,
+            expire_seconds=30,
         )
         self._interval(
             name="Poll active ROM set downloads",
             task="apps.romsets.tasks.poll_active_romsets",
             every=5,
             period=IntervalSchedule.SECONDS,
+            expire_seconds=30,
         )
         self._crontab(
             name="Run full catalog ingestion",
@@ -68,11 +91,19 @@ class Command(BaseCommand):
         )
         self.stdout.write(self.style.SUCCESS("Periodic tasks are up to date."))
 
-    def _interval(self, *, name: str, task: str, every: int, period: str) -> None:
+    def _interval(self, *, name: str, task: str, every: int, period: str, expire_seconds: int | None = None) -> None:
         schedule, _ = IntervalSchedule.objects.get_or_create(every=every, period=period)
         PeriodicTask.objects.update_or_create(
             task=task,
-            defaults={"name": name, "interval": schedule, "crontab": None, "enabled": True},
+            defaults={
+                "name": name,
+                "interval": schedule,
+                "crontab": None,
+                "enabled": True,
+                # None clears it, so a cadence that stops needing an expiry
+                # loses one on the next run rather than keeping a stale value.
+                "expire_seconds": expire_seconds,
+            },
         )
 
     def _crontab(self, *, name: str, task: str, minute: str, hour: str, day_of_week: str = "*") -> None:
